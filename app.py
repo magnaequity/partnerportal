@@ -97,11 +97,14 @@ def row_to_dict(row):
 
 def actor():
     user_id = request.headers.get("X-User-Id") or request.args.get("user_id")
+    requested_role = request.headers.get("X-Role") or request.args.get("role")
     if user_id:
         user = query("select * from users where id = ? and status = 'active'", (user_id,), one=True)
         if user:
-            return row_to_dict(user)
-    role = request.headers.get("X-Role") or request.args.get("role") or ROLE_MASTER
+            user_data = row_to_dict(user)
+            if not requested_role or user_data["role"] == requested_role:
+                return user_data
+    role = requested_role or ROLE_MASTER
     user = query("select * from users where role = ? order by id limit 1", (role,), one=True)
     if not user:
         user = query("select * from users where role = ? limit 1", (ROLE_MASTER,), one=True)

@@ -368,6 +368,16 @@ function headers(extra = {}) {
   return { "X-Role": state.role, "X-User-Id": state.userId, ...extra };
 }
 
+function activeUserForRole(role) {
+  return state.data?.users.find((user) => user.role === role && user.status === "active");
+}
+
+function syncUserForRole(role) {
+  const user = activeUserForRole(role);
+  state.userId = user?.id || "";
+  localStorage.setItem("partnerportal_user_id", state.userId);
+}
+
 async function api(path, options = {}) {
   const isForm = options.body instanceof FormData;
   const response = await fetch(path, {
@@ -393,6 +403,10 @@ function toast(message) {
 
 async function load() {
   state.data = await api("/api/bootstrap");
+  if (state.data.actor?.id) {
+    state.userId = state.data.actor.id;
+    localStorage.setItem("partnerportal_user_id", state.userId);
+  }
   renderShell();
   renderView();
 }
@@ -1159,6 +1173,7 @@ document.addEventListener("submit", async (event) => {
 
 qs("#roleSelect").addEventListener("change", async (event) => {
   state.role = event.target.value;
+  syncUserForRole(state.role);
   localStorage.setItem("partnerportal_role", state.role);
   await load();
 });
