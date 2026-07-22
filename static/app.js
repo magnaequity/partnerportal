@@ -52,6 +52,7 @@ const labels = {
     view: "Ver",
     close: "Cerrar",
     execute: "Ejecutar",
+    closeOperation: "Cerrar operación",
     approve: "Aprobar",
     reject: "Rechazar",
     reopen: "Reabrir",
@@ -130,9 +131,9 @@ const labels = {
     outboundAccount: "Cuenta salida",
     inboundAccount: "Cuenta entrada",
     sendClientApproval: "Enviar a aprobación cliente",
-    executeOperation: "Ejecutar operación",
-    usdExitSupport: "Comprobante salida USD",
-    vesEntrySupport: "Comprobante entrada VES",
+    executeOperation: "Cerrar operación",
+    usdExitSupport: "Prueba movimiento USD",
+    vesEntrySupport: "Prueba movimiento VES",
     inNegotiation: "En negociación",
     reopened: "Solicitud reabierta.",
     requiredComment: "Comentario obligatorio",
@@ -142,7 +143,7 @@ const labels = {
     saved: "Guardado.",
     decisionSaved: "Decisión registrada.",
     requestCreated: "Solicitud creada.",
-    operationExecuted: "Operación ejecutada.",
+    operationExecuted: "Operación completada.",
     deleteAccountConfirm: "¿Borrar cuenta?",
     deleteBeneficiaryConfirm: "¿Borrar beneficiario?",
     deleteUserConfirm: "¿Desactivar usuario?",
@@ -197,6 +198,7 @@ const labels = {
     view: "View",
     close: "Close",
     execute: "Execute",
+    closeOperation: "Close operation",
     approve: "Approve",
     reject: "Reject",
     reopen: "Reopen",
@@ -266,7 +268,7 @@ const labels = {
     categoryManagement: "Category Management",
     kind: "Kind",
     operationDetail: "Operation detail",
-    support: "Attachments",
+    support: "Support documentation",
     openSupport: "Open attachment",
     download: "Download",
     timeline: "Timeline",
@@ -275,9 +277,9 @@ const labels = {
     outboundAccount: "Outbound account",
     inboundAccount: "Inbound account",
     sendClientApproval: "Send to client approval",
-    executeOperation: "Execute operation",
-    usdExitSupport: "USD outbound receipt",
-    vesEntrySupport: "VES inbound receipt",
+    executeOperation: "Close operation",
+    usdExitSupport: "USD movement proof",
+    vesEntrySupport: "VES movement proof",
     inNegotiation: "In negotiation",
     reopened: "Request reopened.",
     requiredComment: "Required comment",
@@ -287,7 +289,7 @@ const labels = {
     saved: "Saved.",
     decisionSaved: "Decision saved.",
     requestCreated: "Request created.",
-    operationExecuted: "Operation executed.",
+    operationExecuted: "Operation completed.",
     deleteAccountConfirm: "Delete account?",
     deleteBeneficiaryConfirm: "Delete beneficiary?",
     deleteUserConfirm: "Deactivate user?",
@@ -946,7 +948,7 @@ function openOperationDetail(id) {
     ${canMaster && op.status === "pending_master" ? `<button class="subtle" data-status-op="${op.id}" data-status="in_negotiation" type="button">${t("inNegotiation")}</button>` : ""}
     ${canMaster && ["in_negotiation", "pending_master"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${t("loadRate")}</button>` : ""}
     ${canClientApprove ? `<button class="danger" data-decision-op="${op.id}" data-decision="reject" type="button">${t("reject")}</button><button class="primary" data-decision-op="${op.id}" data-decision="approve" type="button">${t("approve")}</button>` : ""}
-    ${canMaster && op.status === "approved" ? `<button class="primary" data-execute-op="${op.id}" type="button">${t("execute")}</button>` : ""}
+    ${canMaster && op.status === "approved" ? `<button class="primary" data-execute-op="${op.id}" type="button">${t("closeOperation")}</button>` : ""}
   `);
 }
 
@@ -990,10 +992,10 @@ function openExecuteModal(id) {
       <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" value="${op.ves_amount || 0}" /></label>
       <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions("", op.source_account_id)}</select></label>
       <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions("", op.destination_account_id)}</select></label>
-      <label class="full">${t("usdExitSupport")}<input name="usd_exit_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" /></label>
-      <label class="full">${t("vesEntrySupport")}<input name="ves_entry_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" /></label>
+      <label class="full">${t("usdExitSupport")}<input name="usd_exit_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
+      <label class="full">${t("vesEntrySupport")}<input name="ves_entry_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
-      <div class="full"><button class="primary" type="submit">${t("execute")}</button></div>
+      <div class="full"><button class="primary" type="submit">${t("closeOperation")}</button></div>
     </form>
   `);
 }
@@ -1167,8 +1169,8 @@ document.addEventListener("submit", async (event) => {
     if (form.matches("[data-execute-form]")) {
       event.preventDefault();
       const data = new FormData(form);
-      data.append("usd_exit_support_label", "Comprobante salida USD");
-      data.append("ves_entry_support_label", "Comprobante entrada VES");
+      data.append("usd_exit_support_label", t("usdExitSupport"));
+      data.append("ves_entry_support_label", t("vesEntrySupport"));
       await api(`/api/operations/${form.dataset.executeForm}/execute`, { method: "POST", body: data });
       closeModal();
       await load();

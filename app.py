@@ -910,6 +910,12 @@ def execute_operation(operation_id):
     op = operation_payload(operation_id)
     if not op:
         return jsonify({"error": "Operacion no encontrada."}), 404
+    if op["status"] != "approved":
+        return jsonify({"error": "Solo se pueden cerrar operaciones aprobadas."}), 400
+    required_files = ("usd_exit_support", "ves_entry_support")
+    missing_files = [key for key in required_files if key not in request.files or not request.files[key].filename]
+    if missing_files:
+        return jsonify({"error": "Debes cargar la prueba USD y la prueba VES para cerrar la operacion."}), 400
     source_account = data.get("source_account_id") or op.get("source_account_id")
     destination_account = data.get("destination_account_id") or op.get("destination_account_id")
     usd_amount = money(data.get("usd_amount", op.get("usd_amount") or 0))
@@ -917,7 +923,7 @@ def execute_operation(operation_id):
     execute(
         """
         update operations
-        set status = 'executed', source_account_id = ?, destination_account_id = ?,
+        set status = 'completed', source_account_id = ?, destination_account_id = ?,
             usd_amount = ?, ves_amount = ?, executed_at = ?, updated_at = ?
         where id = ?
         """,
@@ -932,7 +938,7 @@ def execute_operation(operation_id):
         update_balance(destination_account, ves_amount, "Entrada VES por venta", operation_id)
     elif op["type"] == "payment":
         update_balance(source_account, -abs(ves_amount or op.get("requested_amount") or 0), "Dispersion de pago", operation_id)
-    log_event(operation_id, "executed", "Master ejecuto la operacion y cargo soportes.", user["id"], data.get("comment"))
+    log_event(operation_id, "completed", "Master cerro la operacion y cargo las pruebas USD/VES.", user["id"], data.get("comment"))
     return jsonify({"operation": operation_payload(operation_id)})
 
 
@@ -941,9 +947,7 @@ def complete_operation(operation_id):
     user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    execute("update operations set status = 'completed', updated_at = ? where id = ?", (now_iso(), operation_id))
-    log_event(operation_id, "completed", "Operacion cerrada y conciliada.", user["id"])
-    return jsonify({"operation": operation_payload(operation_id)})
+    return jsonify({"error": "Cierra la operacion cargando las pruebas USD/VES desde el flujo de cierre."}), 400
 
 
 @app.post("/api/settings")
