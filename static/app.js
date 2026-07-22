@@ -29,7 +29,7 @@ const labels = {
     treasury: "Tesorería",
     approvals: "Aprobaciones",
     operations: "Operaciones",
-    accounts: "Cuentas Beneficiarios",
+    accounts: "Beneficiarios",
     clientAccounts: "Cuentas Cliente",
     users: "User Management",
     balances: "Saldos",
@@ -165,7 +165,7 @@ const labels = {
     treasury: "Treasury",
     approvals: "Approvals",
     operations: "Operations",
-    accounts: "Beneficiary Accounts",
+    accounts: "Beneficiaries",
     clientAccounts: "Client Accounts",
     users: "User Management",
     balances: "Balances",
@@ -575,20 +575,14 @@ function operationTable(ops, actions = true) {
 }
 
 function renderAccountsBeneficiaries() {
-  const magnaAccounts = state.data.accounts.filter((account) => account.owner === "magna");
   qs("#viewBody").innerHTML = `
     <section class="panel">
       <div class="panel-header">
-        <h2>${t("accounts")}</h2>
+        <h2>${t("beneficiaries")}</h2>
         <div class="row-actions">
-          <button class="primary" data-action="new-account" data-owner="magna" type="button">${t("newAccount")}</button>
           <button class="ghost-button" data-action="new-beneficiary" type="button">${t("newBeneficiary")}</button>
         </div>
       </div>
-      ${accountsTable(magnaAccounts)}
-    </section>
-    <section class="panel">
-      <div class="panel-header"><h2>${t("beneficiaries")}</h2></div>
       ${beneficiariesTable(state.data.beneficiaries)}
     </section>
   `;
