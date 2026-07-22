@@ -536,6 +536,43 @@ tbody tr:hover {
   box-shadow: var(--shadow);
 }
 
+.attachment-backdrop {
+  z-index: 55;
+}
+
+.attachment-modal {
+  width: min(1120px, calc(100vw - 28px));
+}
+
+.attachment-modal .modal-body {
+  padding: 0;
+}
+
+.file-preview-frame {
+  width: 100%;
+  height: min(78vh, 860px);
+  border: 0;
+  border-radius: 0 0 22px 22px;
+  background: #ffffff;
+}
+
+.file-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 78vh;
+  margin: 0 auto;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.file-preview-empty {
+  min-height: 280px;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 24px;
+}
+
 .modal-header,
 .modal-footer {
   display: flex;

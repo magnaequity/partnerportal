@@ -120,6 +120,8 @@ const labels = {
     kind: "Tipo",
     operationDetail: "Detalle de operación",
     support: "Soportes",
+    openSupport: "Abrir soporte",
+    download: "Descargar",
     timeline: "Timeline",
     loadRate: "Cargar tasa",
     achievedRate: "Tasa conseguida",
@@ -256,6 +258,8 @@ const labels = {
     kind: "Kind",
     operationDetail: "Operation detail",
     support: "Attachments",
+    openSupport: "Open attachment",
+    download: "Download",
     timeline: "Timeline",
     loadRate: "Load rate",
     achievedRate: "Achieved rate",
@@ -744,6 +748,33 @@ function closeModal() {
   qs("#modalRoot").innerHTML = "";
 }
 
+function openAttachmentViewer(path, filename, contentType = "") {
+  const url = `/uploads/${path}`;
+  const lowerName = (filename || "").toLowerCase();
+  const isPdf = contentType.includes("pdf") || lowerName.endsWith(".pdf");
+  const isImage = contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lowerName);
+  const preview = isPdf
+    ? `<iframe class="file-preview-frame" src="${url}" title="${filename}"></iframe>`
+    : isImage
+      ? `<img class="file-preview-image" src="${url}" alt="${filename}" />`
+      : `<div class="file-preview-empty"><p class="muted">${filename}</p><a class="primary" href="${url}" target="_blank" rel="noreferrer">${t("download")}</a></div>`;
+  qs("#modalRoot").insertAdjacentHTML("beforeend", `
+    <div class="modal-backdrop attachment-backdrop" data-attachment-modal>
+      <section class="modal attachment-modal">
+        <header class="modal-header">
+          <h2>${filename}</h2>
+          <button class="icon-button" data-close-attachment type="button">×</button>
+        </header>
+        <div class="modal-body">${preview}</div>
+      </section>
+    </div>
+  `);
+}
+
+function closeAttachmentViewer() {
+  qs("[data-attachment-modal]")?.remove();
+}
+
 function openLoginModal() {
   openModal(t("loginTitle"), `
     <form data-login-form class="form-grid">
@@ -876,7 +907,7 @@ function openOperationDetail(id) {
     </div>
     <section>
       <h3>${t("support")}</h3>
-      <div class="timeline">${(op.attachments || []).map((file) => `<div class="timeline-item"><strong>${file.label}</strong><div>${file.stored_path ? `<a href="/uploads/${file.stored_path}" target="_blank">${file.filename}</a>` : file.filename}</div></div>`).join("") || `<p class="muted">${t("noSupport")}</p>`}</div>
+      <div class="timeline">${(op.attachments || []).map((file) => `<div class="timeline-item"><strong>${file.label}</strong><div>${file.stored_path ? `<button class="subtle" data-preview-file="${file.stored_path}" data-preview-name="${file.filename}" data-preview-type="${file.content_type || ""}" type="button">${file.filename}</button>` : file.filename}</div></div>`).join("") || `<p class="muted">${t("noSupport")}</p>`}</div>
     </section>
     <section>
       <h3>${t("timeline")}</h3>
@@ -935,6 +966,15 @@ document.addEventListener("click", async (event) => {
   const nav = event.target.closest("[data-nav]");
   if (nav) setView(nav.dataset.nav);
   if (event.target.closest("#openDrawer")) openDrawer();
+  if (event.target.closest("[data-close-attachment]")) {
+    closeAttachmentViewer();
+    return;
+  }
+  const previewFile = event.target.closest("[data-preview-file]");
+  if (previewFile) {
+    openAttachmentViewer(previewFile.dataset.previewFile, previewFile.dataset.previewName, previewFile.dataset.previewType);
+    return;
+  }
   if (event.target.closest("#closeDrawer") || event.target.closest("#drawerBackdrop") || event.target.closest("[data-close-modal]")) closeDrawer(), closeModal();
   if (event.target.closest("#enterApp")) {
     openLoginModal();
