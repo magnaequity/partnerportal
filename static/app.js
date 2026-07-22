@@ -52,7 +52,7 @@ const labels = {
     view: "Ver",
     close: "Cerrar",
     execute: "Ejecutar",
-    closeOperation: "Cerrar operación",
+    closeOperation: "Completar operación",
     approve: "Aprobar",
     reject: "Rechazar",
     reopen: "Reabrir",
@@ -106,13 +106,19 @@ const labels = {
     client: "Cliente",
     magna: "Magna",
     operationalSettings: "Configuración operativa",
-    rateExpirationMinutes: "Vigencia tasa minutos",
+    rateExpirationMinutes: "Vigencia aprobación de tasa (minutos)",
     newTreasuryRequest: "Nueva solicitud de tesorería",
     operationSide: "Tipo",
     inputCurrency: "Imputar monto en",
     expectedRate: "Tasa esperada",
     usage: "Uso",
     beneficiary: "Beneficiario",
+    paymentDistribution: "Distribución de pagos",
+    selectBeneficiaries: "Selecciona beneficiarios y monto VES por cada uno.",
+    allocationTotal: "Total distribuido",
+    allocationTarget: "Total venta VES",
+    allocationMatches: "Cuadre correcto",
+    allocationMismatch: "La suma debe ser igual al total VES de la venta.",
     comment: "Comentario",
     deliveryNoteInvoice: "Nota de entrega / factura",
     editAccount: "Editar cuenta",
@@ -131,7 +137,7 @@ const labels = {
     outboundAccount: "Cuenta salida",
     inboundAccount: "Cuenta entrada",
     sendClientApproval: "Enviar a aprobación cliente",
-    executeOperation: "Cerrar operación",
+    executeOperation: "Completar operación",
     usdExitSupport: "Prueba movimiento USD",
     vesEntrySupport: "Prueba movimiento VES",
     inNegotiation: "En negociación",
@@ -198,7 +204,7 @@ const labels = {
     view: "View",
     close: "Close",
     execute: "Execute",
-    closeOperation: "Close operation",
+    closeOperation: "Complete transaction",
     approve: "Approve",
     reject: "Reject",
     reopen: "Reopen",
@@ -252,13 +258,19 @@ const labels = {
     client: "Client",
     magna: "Magna",
     operationalSettings: "Operational settings",
-    rateExpirationMinutes: "Rate expiration minutes",
+    rateExpirationMinutes: "Rate approval validity (minutes)",
     newTreasuryRequest: "New treasury request",
     operationSide: "Type",
     inputCurrency: "Input amount in",
     expectedRate: "Expected rate",
     usage: "Use",
     beneficiary: "Beneficiary",
+    paymentDistribution: "Payment distribution",
+    selectBeneficiaries: "Select beneficiaries and VES amount for each one.",
+    allocationTotal: "Allocated total",
+    allocationTarget: "Sale total VES",
+    allocationMatches: "Matched",
+    allocationMismatch: "The sum must equal the sale VES total.",
     comment: "Comment",
     deliveryNoteInvoice: "Delivery note / invoice",
     editAccount: "Edit account",
@@ -277,7 +289,7 @@ const labels = {
     outboundAccount: "Outbound account",
     inboundAccount: "Inbound account",
     sendClientApproval: "Send to client approval",
-    executeOperation: "Close operation",
+    executeOperation: "Complete transaction",
     usdExitSupport: "USD movement proof",
     vesEntrySupport: "VES movement proof",
     inNegotiation: "In negotiation",
@@ -839,23 +851,119 @@ function openTreasuryModal() {
           ${categories.map((cat) => `<option value="${cat.id}">${cat.name}</option>`).join("")}
         </select>
       </label>
-      <label>${t("beneficiary")}
-        <select name="beneficiary_id" data-beneficiary-select>${beneficiaryOptionsForCategory(categories[0]?.id)}</select>
-      </label>
+      <input type="hidden" name="payment_allocations" data-payment-allocations />
+      <div class="full allocation-panel" data-allocation-panel>
+        ${paymentAllocationMarkup(categories[0]?.id)}
+      </div>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
       <label class="full">${t("deliveryNoteInvoice")}<input name="support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" /></label>
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
     </form>
   `);
+  updatePaymentAllocationSummary(qs("[data-treasury-form]"));
 }
 
-function beneficiaryOptionsForCategory(categoryId) {
+function beneficiariesForCategory(categoryId) {
   const category = categoryName(categoryId).toLowerCase();
   const beneficiaryCategory = category.includes("partner") ? "partner" : "provider";
-  return state.data.beneficiaries
-    .filter((ben) => ben.category === beneficiaryCategory)
-    .map((ben) => `<option value="${ben.id}">${ben.name}</option>`)
-    .join("");
+  return state.data.beneficiaries.filter((ben) => ben.category === beneficiaryCategory);
+}
+
+function paymentAllocationMarkup(categoryId) {
+  const beneficiaries = beneficiariesForCategory(categoryId);
+  return `
+    <div class="allocation-head">
+      <div>
+        <h3>${t("paymentDistribution")}</h3>
+        <p class="muted">${t("selectBeneficiaries")}</p>
+      </div>
+      <span class="allocation-proof" data-allocation-proof>—</span>
+    </div>
+    <div class="allocation-list">
+      ${beneficiaries.map((ben) => `
+        <label class="allocation-row">
+          <input type="checkbox" value="${ben.id}" data-allocation-check />
+          <span>
+            <strong>${ben.name}</strong>
+            <small>${ben.bank || "—"} · ${ben.account_number || "—"}</small>
+          </span>
+          <input type="number" step="0.01" min="0" placeholder="VES" data-allocation-amount="${ben.id}" disabled />
+        </label>
+      `).join("") || `<p class="muted">${t("noBeneficiaries")}</p>`}
+    </div>
+    <div class="allocation-summary">
+      <span>${t("allocationTotal")}: <strong data-allocation-total>0.00 VES</strong></span>
+      <span>${t("allocationTarget")}: <strong data-allocation-target>0.00 VES</strong></span>
+    </div>
+  `;
+}
+
+function targetVesForTreasuryForm(form) {
+  const ves = Number(form.elements.ves_amount?.value || 0);
+  const usd = Number(form.elements.usd_amount?.value || 0);
+  const rate = Number(form.elements.expected_rate?.value || 0);
+  if (ves) return Math.abs(ves);
+  if (usd && rate) return Math.abs(usd * rate);
+  return 0;
+}
+
+function selectedPaymentAllocations(form) {
+  return [...form.querySelectorAll("[data-allocation-check]")]
+    .filter((checkbox) => checkbox.checked)
+    .map((checkbox) => {
+      const amountInput = form.querySelector(`[data-allocation-amount="${checkbox.value}"]`);
+      return { beneficiary_id: checkbox.value, amount_ves: Number(amountInput?.value || 0) };
+    });
+}
+
+function updatePaymentAllocationSummary(form) {
+  if (!form) return;
+  const panel = form.querySelector("[data-allocation-panel]");
+  const isSell = form.elements.operation_side?.value === "sell";
+  if (panel) panel.hidden = !isSell;
+  [...form.querySelectorAll("[data-allocation-check]")].forEach((checkbox) => {
+    const amountInput = form.querySelector(`[data-allocation-amount="${checkbox.value}"]`);
+    if (amountInput) amountInput.disabled = !checkbox.checked;
+    if (!checkbox.checked && amountInput) amountInput.value = "";
+  });
+  const target = isSell ? targetVesForTreasuryForm(form) : 0;
+  const total = selectedPaymentAllocations(form).reduce((sum, item) => sum + item.amount_ves, 0);
+  const matches = isSell && target > 0 && Math.round(total * 100) === Math.round(target * 100);
+  const totalNode = form.querySelector("[data-allocation-total]");
+  const targetNode = form.querySelector("[data-allocation-target]");
+  const proofNode = form.querySelector("[data-allocation-proof]");
+  if (totalNode) totalNode.textContent = money(total, "VES");
+  if (targetNode) targetNode.textContent = money(target, "VES");
+  if (proofNode) {
+    proofNode.textContent = matches ? t("allocationMatches") : t("allocationMismatch");
+    proofNode.classList.toggle("ok", matches);
+  }
+  const hidden = form.querySelector("[data-payment-allocations]");
+  if (hidden) hidden.value = isSell ? JSON.stringify(selectedPaymentAllocations(form)) : "[]";
+  return matches;
+}
+
+function operationAllocationDetail(op) {
+  const allocations = op.metadata?.payment_allocations || [];
+  if (!allocations.length) return "";
+  const total = allocations.reduce((sum, item) => sum + Number(item.amount_ves || 0), 0);
+  return `
+    <section>
+      <h3>${t("paymentDistribution")}</h3>
+      <div class="allocation-detail">
+        ${allocations.map((item) => `
+          <div class="allocation-detail-row">
+            <span>${item.beneficiary_name || beneficiaryName(item.beneficiary_id)}</span>
+            <strong>${money(item.amount_ves, "VES")}</strong>
+          </div>
+        `).join("")}
+        <div class="allocation-detail-row total">
+          <span>${t("allocationTotal")}</span>
+          <strong>${money(total, "VES")}</strong>
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 function openAccountModal(owner, account = {}) {
@@ -939,6 +1047,7 @@ function openOperationDetail(id) {
       <h3>${t("support")}</h3>
       <div class="timeline">${(op.attachments || []).map((file) => `<div class="timeline-item"><strong>${file.label}</strong><div>${file.stored_path ? `<button class="subtle" data-preview-file="${file.stored_path}" data-preview-name="${file.filename}" data-preview-type="${file.content_type || ""}" type="button">${file.filename}</button>` : file.filename}</div></div>`).join("") || `<p class="muted">${t("noSupport")}</p>`}</div>
     </section>
+    ${operationAllocationDetail(op)}
     <section>
       <h3>${t("timeline")}</h3>
       <div class="timeline">${(op.events || []).map((event) => `<div class="timeline-item"><strong>${event.description}</strong><div class="muted">${new Date(event.created_at).toLocaleString()} ${event.comment ? `· ${event.comment}` : ""}</div></div>`).join("")}</div>
@@ -1091,8 +1200,16 @@ document.addEventListener("change", (event) => {
   }
   const usage = event.target.closest("[data-usage-category]");
   if (usage) {
-    const select = qs("[data-beneficiary-select]");
-    if (select) select.innerHTML = beneficiaryOptionsForCategory(usage.value);
+    const form = usage.closest("[data-treasury-form]");
+    const panel = form?.querySelector("[data-allocation-panel]");
+    if (panel) panel.innerHTML = paymentAllocationMarkup(usage.value);
+    updatePaymentAllocationSummary(form);
+  }
+  const treasurySide = event.target.closest("[data-treasury-side]");
+  if (treasurySide) updatePaymentAllocationSummary(treasurySide.closest("[data-treasury-form]"));
+  const allocationCheck = event.target.closest("[data-allocation-check]");
+  if (allocationCheck) {
+    updatePaymentAllocationSummary(allocationCheck.closest("[data-treasury-form]"));
   }
 });
 
@@ -1101,6 +1218,9 @@ document.addEventListener("input", (event) => {
   if (filter) {
     state.filters[filter.dataset.filter] = filter.value;
     renderOperations();
+  }
+  if (event.target.closest("[data-allocation-amount]") || event.target.closest("[data-treasury-form] input[name='ves_amount']") || event.target.closest("[data-treasury-form] input[name='usd_amount']") || event.target.closest("[data-treasury-form] input[name='expected_rate']")) {
+    updatePaymentAllocationSummary(event.target.closest("[data-treasury-form]"));
   }
 });
 
@@ -1123,6 +1243,10 @@ document.addEventListener("submit", async (event) => {
     }
     if (form.matches("[data-treasury-form]")) {
       event.preventDefault();
+      if (form.elements.operation_side?.value === "sell" && !updatePaymentAllocationSummary(form)) {
+        toast(t("allocationMismatch"));
+        return;
+      }
       const data = new FormData(form);
       await api("/api/treasury-requests", { method: "POST", body: data });
       closeModal();

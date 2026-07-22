@@ -725,6 +725,47 @@ def normalize_treasury_amounts(data):
     return op_type, money(usd_signed), money(ves_signed)
 
 
+def parse_payment_allocations(data, target_ves_amount=None, required=False):
+    raw_allocations = data.get("payment_allocations") or "[]"
+    if isinstance(raw_allocations, str):
+        try:
+            raw_allocations = json.loads(raw_allocations)
+        except json.JSONDecodeError:
+            return None, Decimal("0"), "La distribucion de beneficiarios no es valida."
+    if not isinstance(raw_allocations, list):
+        return None, Decimal("0"), "La distribucion de beneficiarios no es valida."
+    allocations = []
+    seen = set()
+    total = Decimal("0")
+    for item in raw_allocations:
+        beneficiary_id = (item.get("beneficiary_id") or "").strip()
+        if not beneficiary_id:
+            continue
+        if beneficiary_id in seen:
+            return None, Decimal("0"), "Cada beneficiario solo puede aparecer una vez."
+        beneficiary = query("select * from beneficiaries where id = ? and status != 'deleted'", (beneficiary_id,), one=True)
+        if not beneficiary:
+            return None, Decimal("0"), "Uno de los beneficiarios seleccionados no existe."
+        amount = Decimal(str(item.get("amount_ves") or item.get("amount") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if amount <= 0:
+            return None, Decimal("0"), "Cada beneficiario debe tener un monto mayor a cero."
+        seen.add(beneficiary_id)
+        total += amount
+        allocations.append(
+            {
+                "beneficiary_id": beneficiary_id,
+                "beneficiary_name": beneficiary["name"],
+                "beneficiary_category": beneficiary["category"],
+                "amount_ves": money(amount),
+            }
+        )
+    if required and not allocations:
+        return None, Decimal("0"), "Debes seleccionar al menos un beneficiario para la venta."
+    if target_ves_amount is not None and total != abs(Decimal(str(target_ves_amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)):
+        return None, total, "La suma por beneficiario debe ser igual al total VES de la venta."
+    return allocations, total, None
+
+
 @app.post("/api/treasury-requests")
 def create_treasury_request():
     user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
@@ -734,6 +775,10 @@ def create_treasury_request():
     if request.is_json:
         data = request.get_json(force=True)
     op_type, usd_amount, ves_amount = normalize_treasury_amounts(data)
+    allocation_target = ves_amount if op_type == "sell_usd" else None
+    allocations, _allocation_total, allocation_error = parse_payment_allocations(data, allocation_target, required=op_type == "sell_usd")
+    if allocation_error:
+        return jsonify({"error": allocation_error}), 400
     operation_id = make_id("BUY" if op_type == "buy_usd" else "SELL")
     ts = now_iso()
     metadata = {
@@ -741,6 +786,7 @@ def create_treasury_request():
         "input_currency": data.get("input_currency"),
         "comment": data.get("comment", ""),
         "document_type": data.get("document_type", ""),
+        "payment_allocations": allocations or [],
     }
     execute(
         """
@@ -901,6 +947,52 @@ def update_balance(account_id, delta, reason, operation_id):
     log_event(operation_id, "balance_updated", f"{reason}: {delta:+,.2f} {account['currency']}", metadata={"account_id": account_id, "new_balance": new_balance})
 
 
+def create_payment_requests_from_sale(sale_op, allocations, source_account_id, user_id):
+    ts = now_iso()
+    created_ids = []
+    for allocation in allocations:
+        payment_id = make_id("PAY")
+        beneficiary_id = allocation["beneficiary_id"]
+        beneficiary_name = allocation.get("beneficiary_name") or beneficiary_id
+        amount = money(allocation["amount_ves"])
+        payment_type = "partner" if allocation.get("beneficiary_category") == "partner" else "provider"
+        metadata = {
+            "payment_type": payment_type,
+            "source_sale_operation_id": sale_op["id"],
+            "auto_generated": True,
+        }
+        execute(
+            """
+            insert into operations
+            (id, partner_id, type, status, reason, requested_currency, requested_amount, rate,
+             source_account_id, destination_account_id, beneficiary_id, linked_operation_id,
+             final_currency, final_amount, created_by, metadata, usd_amount, ves_amount, created_at, updated_at)
+            values (?, ?, 'payment', 'funded', ?, 'VES', ?, ?, ?, ?, ?, ?, 'VES', ?, ?, ?, 0, ?, ?, ?)
+            """,
+            (
+                payment_id,
+                sale_op["partner_id"],
+                f"Pago a {beneficiary_name}",
+                amount,
+                sale_op.get("rate") or 0,
+                source_account_id,
+                None,
+                beneficiary_id,
+                sale_op["id"],
+                amount,
+                user_id,
+                json.dumps(metadata),
+                -abs(amount),
+                ts,
+                ts,
+            ),
+        )
+        log_event(payment_id, "created", f"Solicitud de pago autogenerada desde {sale_op['id']}.", user_id)
+        created_ids.append(payment_id)
+    log_event(sale_op["id"], "payment_requests_created", f"Se generaron {len(created_ids)} solicitudes de pago.", user_id, metadata={"payment_ids": created_ids})
+    return created_ids
+
+
 @app.post("/api/operations/<operation_id>/execute")
 def execute_operation(operation_id):
     user, error = require_roles(ROLE_MASTER)
@@ -920,6 +1012,15 @@ def execute_operation(operation_id):
     destination_account = data.get("destination_account_id") or op.get("destination_account_id")
     usd_amount = money(data.get("usd_amount", op.get("usd_amount") or 0))
     ves_amount = money(data.get("ves_amount", op.get("ves_amount") or 0))
+    allocations = []
+    if op["type"] == "sell_usd":
+        allocations, _allocation_total, allocation_error = parse_payment_allocations(
+            {"payment_allocations": metadata_value(op, "payment_allocations", [])},
+            ves_amount,
+            required=True,
+        )
+        if allocation_error:
+            return jsonify({"error": allocation_error}), 400
     execute(
         """
         update operations
@@ -936,6 +1037,7 @@ def execute_operation(operation_id):
     elif op["type"] == "sell_usd":
         update_balance(source_account, usd_amount, "Salida USD por venta", operation_id)
         update_balance(destination_account, ves_amount, "Entrada VES por venta", operation_id)
+        create_payment_requests_from_sale({**op, "destination_account_id": destination_account}, allocations, destination_account, user["id"])
     elif op["type"] == "payment":
         update_balance(source_account, -abs(ves_amount or op.get("requested_amount") or 0), "Dispersion de pago", operation_id)
     log_event(operation_id, "completed", "Master cerro la operacion y cargo las pruebas USD/VES.", user["id"], data.get("comment"))

@@ -635,6 +635,81 @@ tbody tr:hover {
   padding: 7px 0 7px 12px;
 }
 
+.allocation-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(248, 251, 252, 0.88);
+}
+
+.allocation-head,
+.allocation-summary,
+.allocation-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.allocation-head h3 {
+  margin: 0 0 4px;
+}
+
+.allocation-proof {
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--red);
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: rgba(189, 59, 69, 0.1);
+}
+
+.allocation-proof.ok {
+  color: var(--green);
+  background: rgba(31, 138, 91, 0.12);
+}
+
+.allocation-list,
+.allocation-detail {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.allocation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.allocation-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.allocation-summary {
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.allocation-detail-row {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(248, 251, 252, 0.86);
+}
+
+.allocation-detail-row.total {
+  font-weight: 800;
+  background: rgba(88, 198, 228, 0.1);
+}
+
 .toast {
   border: 1px solid rgba(88, 198, 228, 0.35);
   border-radius: 14px;
