@@ -775,6 +775,31 @@ def parse_payment_allocations(data, target_ves_amount=None, required=False, requ
     return allocations, total, None
 
 
+def recalculate_amounts_for_rate(op, rate):
+    target_currency = (op.get("final_currency") or op.get("requested_currency") or "").upper()
+    target_amount = Decimal(str(op.get("final_amount") or op.get("requested_amount") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if not target_amount:
+        return Decimal(str(op["usd_amount"])), Decimal(str(op["ves_amount"]))
+    if op["type"] == "sell_usd":
+        if target_currency == "VES":
+            ves_amount = abs(target_amount)
+            usd_amount = -(ves_amount / rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            usd_amount = -abs(target_amount)
+            ves_amount = (abs(usd_amount) * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    elif op["type"] == "buy_usd":
+        if target_currency == "VES":
+            ves_amount = -abs(target_amount)
+            usd_amount = (abs(ves_amount) / rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            usd_amount = abs(target_amount)
+            ves_amount = -(usd_amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    else:
+        usd_amount = Decimal(str(op["usd_amount"]))
+        ves_amount = Decimal(str(op["ves_amount"]))
+    return usd_amount, ves_amount
+
+
 @app.post("/api/treasury-requests")
 def create_treasury_request():
     user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
@@ -870,19 +895,15 @@ def set_operation_rate(operation_id):
     if not op:
         return jsonify({"error": "Operacion no encontrada."}), 404
     rate = Decimal(str(data["rate"]))
+    if rate <= 0:
+        return jsonify({"error": "La tasa debe ser mayor a cero."}), 400
     binance_rate = Decimal(str(data.get("binance_rate") or 0))
     spread = Decimal("0")
     if binance_rate:
         spread = ((rate - binance_rate) / binance_rate * Decimal("100")).quantize(Decimal("0.01"))
     minutes = int(get_setting("rate_expiration_minutes", "7"))
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
-    usd_amount = Decimal(str(op["usd_amount"]))
-    ves_amount = Decimal(str(op["ves_amount"]))
-    if usd_amount and not ves_amount:
-        ves_amount = -usd_amount * rate if op["type"] == "buy_usd" else abs(usd_amount) * rate
-    if ves_amount and not usd_amount:
-        usd_amount = abs(ves_amount) / rate
-        usd_amount = usd_amount if op["type"] == "buy_usd" else -usd_amount
+    usd_amount, ves_amount = recalculate_amounts_for_rate(op, rate)
     execute(
         """
         update operations
