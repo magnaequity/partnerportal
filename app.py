@@ -21,6 +21,12 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 ROLE_MASTER = "magna_admin"
 CLIENT_ROLES = ("super_approver", "treasury", "finance")
+DEMO_PASSWORDS = {
+    "ops@magnaequity.com": {"env": "MAGNA_ADMIN_PASSWORD", "role": ROLE_MASTER},
+    "approver@yango.com": {"env": "YANGO_APPROVER_PASSWORD", "role": "super_approver"},
+    "treasury@yango.com": {"env": "YANGO_TREASURY_PASSWORD", "role": "treasury"},
+    "finance@yango.com": {"env": "YANGO_FINANCE_PASSWORD", "role": "finance"},
+}
 
 
 def now_iso():
@@ -282,6 +288,7 @@ def seed_db():
         ("usr-yango-finance", partner_id, "Finanzas Yango", "finance@yango.com", "finance", "active", ts),
     ]
     conn.executemany("insert or ignore into users values (?, ?, ?, ?, ?, ?, ?)", users)
+    conn.execute("update users set email = ? where id = ?", ("treasury@yango.com", "usr-yango-treasury"))
     accounts = [
         ("acct-ves-magna", partner_id, "magna", "Cuenta operativa VES", "Banco Nacional", "0102-0000-0000-0000", "Magna Equity", "bank", "VES", "", 0.35, 3850000, "", "Cuenta receptora de bolivares.", "active", ts, ts, 3850000, "operational"),
         ("acct-usd-magna", partner_id, "magna", "Custodia USD Magna", "BitGo", "", "Magna Equity", "wallet", "USD", "0x8d1...demo", 0, 132500, "https://www.bitgo.com/", "Wallet visible para consulta externa.", "active", ts, ts, 132500, "operational"),
@@ -398,6 +405,23 @@ def bootstrap():
             "settings": {x["key"]: x["value"] for x in query("select * from settings")},
         }
     )
+
+
+@app.post("/api/login")
+def login():
+    data = request.get_json(force=True)
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    credentials = DEMO_PASSWORDS.get(email)
+    configured_password = os.environ.get(credentials["env"]) if credentials else None
+    if not credentials or not configured_password:
+        return jsonify({"error": "Login no configurado. Define las claves demo en Railway."}), 503
+    if configured_password != password:
+        return jsonify({"error": "Credenciales invalidas."}), 401
+    user = query("select * from users where email = ? and role = ?", (email, credentials["role"]), one=True)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado."}), 404
+    return jsonify({"user": row_to_dict(user), "role": credentials["role"]})
 
 
 @app.post("/api/users")

@@ -11,18 +11,18 @@
       <div class="landing-glow"></div>
       <header class="landing-header">
         <img src="/static/assets/magna-logo.jpg" alt="Magna Equity" />
-        <button id="landingLang" class="ghost-button" type="button">ES / EN</button>
+        <button id="landingLang" class="ghost-button" type="button">ES</button>
       </header>
       <main class="landing-copy">
-        <p class="eyebrow">Partner Treasury Portal</p>
-        <h1>Private operating infrastructure for FX, payments and reconciliation.</h1>
-        <p>Secure approval workflows, account-level traceability and auditable execution between Magna Equity and Yango.</p>
-        <button id="enterApp" class="primary large" type="button">Login</button>
+        <p class="eyebrow" data-i18n="landingEyebrow">Portal de Tesorería Partner</p>
+        <h1 data-i18n="landingTitle">Infraestructura privada para FX, pagos y conciliación.</h1>
+        <p data-i18n="landingBody">Flujos seguros de aprobación, trazabilidad por cuenta y ejecución auditable entre Magna Equity y Yango.</p>
+        <button id="enterApp" class="primary large" type="button" data-i18n="login">Login</button>
       </main>
       <aside class="login-panel">
-        <span>Secure access</span>
+        <span data-i18n="secureAccess">Acceso seguro</span>
         <strong>Magna Equity x Yango</strong>
-        <p>Use role view for demo validation. Production auth is pending.</p>
+        <p data-i18n="loginPanelBody">Usa la vista por rol para validar la demo. La autenticación productiva queda pendiente.</p>
       </aside>
     </section>
 
@@ -38,10 +38,10 @@
           <label>
             <span data-i18n="roleView">Vista / rol</span>
             <select id="roleSelect">
-              <option value="magna_admin">Master · Magna</option>
-              <option value="super_approver">Cliente · Super-approver</option>
-              <option value="treasury">Cliente · Tesorería</option>
-              <option value="finance">Cliente · Finanzas</option>
+              <option value="magna_admin" data-role-option="magna_admin">Master · Magna</option>
+              <option value="super_approver" data-role-option="super_approver">Cliente · Super-approver</option>
+              <option value="treasury" data-role-option="treasury">Cliente · Tesorería</option>
+              <option value="finance" data-role-option="finance">Cliente · Finanzas</option>
             </select>
           </label>
         </div>
@@ -51,7 +51,7 @@
         <header class="topbar">
           <button id="openDrawer" class="menu-button" type="button" aria-label="Abrir menu">☰</button>
           <div>
-            <p id="viewEyebrow" class="eyebrow">Treasury command center</p>
+            <p id="viewEyebrow" class="eyebrow" data-i18n="viewEyebrow">Centro de comando de tesorería</p>
             <h1 id="viewTitle">Dashboard</h1>
           </div>
           <div class="top-actions">
