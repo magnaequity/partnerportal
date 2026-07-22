@@ -13,8 +13,21 @@ from werkzeug.utils import secure_filename
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = Path(os.environ.get("DATABASE_PATH", BASE_DIR / "partnerportal.db"))
-UPLOAD_DIR = BASE_DIR / "uploads"
+
+
+def default_data_dir():
+    configured = os.environ.get("DATA_DIR") or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+    if configured:
+        return Path(configured)
+    railway_volume = Path("/data")
+    if railway_volume.exists():
+        return railway_volume
+    return BASE_DIR
+
+
+DATA_DIR = default_data_dir()
+DB_PATH = Path(os.environ.get("DATABASE_PATH", DATA_DIR / "partnerportal.db"))
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", DATA_DIR / "uploads"))
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
@@ -44,6 +57,7 @@ def make_id(prefix):
 
 def db():
     if "db" not in g:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
     return g.db
@@ -152,7 +166,8 @@ def add_column_if_missing(conn, table, column, definition):
 
 
 def init_db():
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(
         """

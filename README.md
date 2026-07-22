@@ -28,6 +28,21 @@ User Management crea usuarios reales con password hasheada. Las claves se guarda
 
 El repo incluye `Procfile` y `railway.json`. Para que el dominio y proyecto pertenezcan a Magna Equity, el deploy debe hacerse desde el workspace/equipo Railway de Magna, conectado al repo `magnaequity/partnerportal`.
 
+### Persistencia de datos
+
+Para que solicitudes, usuarios, saldos y adjuntos no se pierdan en redeploys, el servicio de Railway debe tener un volumen persistente montado en `/data`.
+
+La app usa automáticamente:
+
+- SQLite: `/data/partnerportal.db`
+- Adjuntos: `/data/uploads`
+
+Variables opcionales si se usa otra ruta:
+
+- `DATA_DIR`
+- `DATABASE_PATH`
+- `UPLOAD_DIR`
+
 ## Documentación
 
 Ver [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) para arquitectura funcional, modelo de datos, flujos, permisos, estados, fases, user stories y criterios de aceptación.
