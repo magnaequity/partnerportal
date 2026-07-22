@@ -47,6 +47,7 @@ const labels = {
     newCategory: "Nueva categoría",
     edit: "Editar",
     delete: "Borrar",
+    cancel: "Cancelar",
     save: "Guardar",
     view: "Ver",
     close: "Cerrar",
@@ -133,7 +134,11 @@ const labels = {
     vesEntrySupport: "Comprobante entrada VES",
     inNegotiation: "En negociación",
     requiredComment: "Comentario obligatorio",
+    decisionTitleApprove: "Aprobar operación",
+    decisionTitleReject: "Rechazar operación",
+    decisionCommentHelp: "Deja el comentario de trazabilidad para completar esta acción.",
     saved: "Guardado.",
+    decisionSaved: "Decisión registrada.",
     requestCreated: "Solicitud creada.",
     operationExecuted: "Operación ejecutada.",
     deleteAccountConfirm: "¿Borrar cuenta?",
@@ -185,6 +190,7 @@ const labels = {
     newCategory: "New category",
     edit: "Edit",
     delete: "Delete",
+    cancel: "Cancel",
     save: "Save",
     view: "View",
     close: "Close",
@@ -271,7 +277,11 @@ const labels = {
     vesEntrySupport: "VES inbound receipt",
     inNegotiation: "In negotiation",
     requiredComment: "Required comment",
+    decisionTitleApprove: "Approve operation",
+    decisionTitleReject: "Reject operation",
+    decisionCommentHelp: "Add the traceability comment to complete this action.",
     saved: "Saved.",
+    decisionSaved: "Decision saved.",
     requestCreated: "Request created.",
     operationExecuted: "Operation executed.",
     deleteAccountConfirm: "Delete account?",
@@ -921,6 +931,24 @@ function openOperationDetail(id) {
   `);
 }
 
+function openDecisionModal(id, decision) {
+  const op = state.data.operations.find((item) => item.id === id);
+  if (!op) return;
+  const isApprove = decision === "approve";
+  openModal(isApprove ? t("decisionTitleApprove") : t("decisionTitleReject"), `
+    <form data-decision-form="${id}" data-decision="${decision}" class="form-grid">
+      <p class="full muted">${op.id} · ${typeLabel(op.type, op.metadata || {})}</p>
+      <label class="full">${t("requiredComment")}
+        <textarea name="comment" rows="4" required autofocus placeholder="${t("decisionCommentHelp")}"></textarea>
+      </label>
+      <div class="full decision-actions">
+        <button class="subtle" data-close-modal type="button">${t("cancel")}</button>
+        <button class="${isApprove ? "primary" : "danger"}" type="submit">${isApprove ? t("approve") : t("reject")}</button>
+      </div>
+    </form>
+  `);
+}
+
 function openRateModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
   openModal(t("loadRate"), `
@@ -1023,8 +1051,7 @@ document.addEventListener("click", async (event) => {
   if (execOp) openExecuteModal(execOp.dataset.executeOp);
   const decision = event.target.closest("[data-decision-op]");
   if (decision) {
-    const comment = prompt(t("requiredComment"));
-    if (comment) await api(`/api/operations/${decision.dataset.decisionOp}/decision`, { method: "POST", body: JSON.stringify({ decision: decision.dataset.decision, comment }) }), closeModal(), await load();
+    openDecisionModal(decision.dataset.decisionOp, decision.dataset.decision);
   }
 });
 
@@ -1097,6 +1124,19 @@ document.addEventListener("submit", async (event) => {
     if (form.matches("[data-rate-form]")) {
       event.preventDefault();
       await submitJson(`/api/operations/${form.dataset.rateForm}/rate`, "POST", form);
+    }
+    if (form.matches("[data-decision-form]")) {
+      event.preventDefault();
+      await api(`/api/operations/${form.dataset.decisionForm}/decision`, {
+        method: "POST",
+        body: JSON.stringify({
+          decision: form.dataset.decision,
+          comment: objectFromForm(form).comment,
+        }),
+      });
+      closeModal();
+      await load();
+      toast(t("decisionSaved"));
     }
     if (form.matches("[data-execute-form]")) {
       event.preventDefault();

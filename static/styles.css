@@ -515,6 +515,12 @@ tbody tr:hover {
   grid-column: 1 / -1;
 }
 
+.decision-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
