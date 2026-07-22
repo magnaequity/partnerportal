@@ -1,4 +1,5 @@
 import json
+import mimetypes
 import os
 import sqlite3
 import uuid
@@ -7,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from flask import Flask, g, jsonify, request, send_from_directory
+from werkzeug.utils import secure_filename
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -14,7 +16,11 @@ DB_PATH = Path(os.environ.get("DATABASE_PATH", BASE_DIR / "partnerportal.db"))
 UPLOAD_DIR = BASE_DIR / "uploads"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
+
+
+ROLE_MASTER = "magna_admin"
+CLIENT_ROLES = ("super_approver", "treasury", "finance")
 
 
 def now_iso():
@@ -55,26 +61,40 @@ def execute(sql, args=()):
 
 
 def row_to_dict(row):
+    if row is None:
+        return None
     data = dict(row)
     for key in ("metadata", "rules"):
         if key in data and data[key]:
-            data[key] = json.loads(data[key])
+            try:
+                data[key] = json.loads(data[key])
+            except json.JSONDecodeError:
+                data[key] = {}
     return data
 
 
 def actor():
-    role = request.headers.get("X-Role") or request.args.get("role") or "magna_admin"
+    role = request.headers.get("X-Role") or request.args.get("role") or ROLE_MASTER
     user = query("select * from users where role = ? order by id limit 1", (role,), one=True)
     if not user:
-        user = query("select * from users where role = 'magna_admin' limit 1", one=True)
+        user = query("select * from users where role = ? limit 1", (ROLE_MASTER,), one=True)
     return row_to_dict(user)
 
 
 def require_roles(*roles):
     user = actor()
-    if user["role"] not in roles:
+    if not user or user["role"] not in roles:
         return None, (jsonify({"error": "No tienes permisos para esta accion."}), 403)
     return user, None
+
+
+def parse_json():
+    return request.get_json(force=True) if request.is_json else request.form.to_dict()
+
+
+def metadata_value(op, key, default=None):
+    metadata = op["metadata"] if isinstance(op.get("metadata"), dict) else {}
+    return metadata.get(key, default)
 
 
 def log_event(operation_id, event_type, description, user_id=None, comment=None, metadata=None):
@@ -102,28 +122,20 @@ def get_setting(key, default=None):
     return item["value"] if item else default
 
 
-def update_balance(account_id, delta, reason, operation_id):
-    account = query("select * from accounts where id = ?", (account_id,), one=True)
-    if not account:
-        return
-    new_balance = money(account["balance"] + delta)
-    execute("update accounts set balance = ?, updated_at = ? where id = ?", (new_balance, now_iso(), account_id))
-    log_event(operation_id, "balance_updated", f"{reason}: {delta:+,.2f} {account['currency']}", metadata={"account_id": account_id, "new_balance": new_balance})
-
-
-def expire_pending_rates():
-    rows = query(
+def set_setting(key, value):
+    execute(
         """
-        select id from operations
-        where status in ('pending_approval', 'rate_pending_approval')
-        and expires_at is not null
-        and datetime(expires_at) < datetime(?)
+        insert into settings(key, value, updated_at) values (?, ?, ?)
+        on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at
         """,
-        (now_iso(),),
+        (key, str(value), now_iso()),
     )
-    for row in rows:
-        execute("update operations set status = 'expired', updated_at = ? where id = ?", (now_iso(), row["id"]))
-        log_event(row["id"], "expired", "La solicitud expiro automaticamente por vigencia de tasa.")
+
+
+def add_column_if_missing(conn, table, column, definition):
+    columns = [row[1] for row in conn.execute(f"pragma table_info({table})").fetchall()]
+    if column not in columns:
+        conn.execute(f"alter table {table} add column {column} {definition}")
 
 
 def init_db():
@@ -145,8 +157,7 @@ def init_db():
           email text not null,
           role text not null,
           status text not null,
-          created_at text not null,
-          foreign key(partner_id) references partners(id)
+          created_at text not null
         );
 
         create table if not exists accounts (
@@ -183,6 +194,14 @@ def init_db():
           created_at text not null
         );
 
+        create table if not exists categories (
+          id text primary key,
+          name text not null,
+          kind text not null,
+          status text not null,
+          created_at text not null
+        );
+
         create table if not exists operations (
           id text primary key,
           partner_id text not null,
@@ -214,8 +233,7 @@ def init_db():
           label text not null,
           filename text not null,
           uploaded_by text,
-          created_at text not null,
-          foreign key(operation_id) references operations(id)
+          created_at text not null
         );
 
         create table if not exists audit_events (
@@ -236,6 +254,15 @@ def init_db():
         );
         """
     )
+    add_column_if_missing(conn, "accounts", "initial_balance", "real default 0")
+    add_column_if_missing(conn, "accounts", "account_category", "text default 'operational'")
+    add_column_if_missing(conn, "operations", "usd_amount", "real default 0")
+    add_column_if_missing(conn, "operations", "ves_amount", "real default 0")
+    add_column_if_missing(conn, "operations", "binance_rate", "real default 0")
+    add_column_if_missing(conn, "operations", "spread", "real default 0")
+    add_column_if_missing(conn, "operations", "executed_at", "text")
+    add_column_if_missing(conn, "attachments", "stored_path", "text")
+    add_column_if_missing(conn, "attachments", "content_type", "text")
     conn.commit()
     conn.close()
     seed_db()
@@ -244,39 +271,56 @@ def init_db():
 def seed_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    exists = conn.execute("select id from partners limit 1").fetchone()
-    if exists:
-        conn.close()
-        return
-
     ts = now_iso()
     partner_id = "partner-yango"
-    conn.execute("insert into partners values (?, ?, ?, ?)", (partner_id, "Yango", "active", ts))
+
+    conn.execute("insert or ignore into partners values (?, ?, ?, ?)", (partner_id, "Yango", "active", ts))
     users = [
-        ("usr-magna-admin", None, "Mesa Magna Equity", "ops@magnaequity.com", "magna_admin", "active", ts),
+        ("usr-magna-admin", None, "Mesa Magna Equity", "ops@magnaequity.com", ROLE_MASTER, "active", ts),
         ("usr-yango-super", partner_id, "Aprobador Yango", "approver@yango.com", "super_approver", "active", ts),
-        ("usr-yango-treasury", partner_id, "Tesoreria Yango", "treasury", "treasury", "active", ts),
+        ("usr-yango-treasury", partner_id, "Tesoreria Yango", "treasury@yango.com", "treasury", "active", ts),
         ("usr-yango-finance", partner_id, "Finanzas Yango", "finance@yango.com", "finance", "active", ts),
     ]
-    conn.executemany("insert into users values (?, ?, ?, ?, ?, ?, ?)", users)
+    conn.executemany("insert or ignore into users values (?, ?, ?, ?, ?, ?, ?)", users)
     accounts = [
-        ("acct-ves-magna", partner_id, "magna", "Cuenta operativa VES", "Banco Nacional", "0102-0000-0000-0000", "Magna Equity", "bank", "VES", "", 0.35, 3850000, "", "Cuenta receptora de bolivares.", "active", ts, ts),
-        ("acct-usd-magna", partner_id, "magna", "Custodia USD Magna", "BitGo", "", "Magna Equity", "wallet", "USD", "0x8d1...demo", 0, 132500, "https://www.bitgo.com/", "Wallet visible para consulta externa.", "active", ts, ts),
-        ("acct-ves-payments", partner_id, "magna", "Cuenta dispersion VES", "Banco Mercantil", "0105-1111-2222-3333", "Magna Equity", "bank", "VES", "", 0.15, 1240000, "", "Cuenta de salida para pagos.", "active", ts, ts),
+        ("acct-ves-magna", partner_id, "magna", "Cuenta operativa VES", "Banco Nacional", "0102-0000-0000-0000", "Magna Equity", "bank", "VES", "", 0.35, 3850000, "", "Cuenta receptora de bolivares.", "active", ts, ts, 3850000, "operational"),
+        ("acct-usd-magna", partner_id, "magna", "Custodia USD Magna", "BitGo", "", "Magna Equity", "wallet", "USD", "0x8d1...demo", 0, 132500, "https://www.bitgo.com/", "Wallet visible para consulta externa.", "active", ts, ts, 132500, "operational"),
+        ("acct-ves-client", partner_id, "client", "Yango VES Settlement", "Banco Mercantil", "0105-1111-2222-3333", "Yango", "bank", "VES", "", 0.15, 1240000, "", "Cuenta cliente en bolivares.", "active", ts, ts, 1240000, "client"),
+        ("acct-usd-client", partner_id, "client", "Yango USD Treasury", "BitGo", "USD-CUSTODY-001", "Yango", "wallet", "USD", "0xYango...demo", 0, 84000, "https://www.bitgo.com/", "Cuenta cliente en USD.", "active", ts, ts, 84000, "client"),
     ]
-    conn.executemany("insert into accounts values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", accounts)
+    conn.executemany(
+        """
+        insert or ignore into accounts
+        (id, partner_id, owner, name, institution, account_number, beneficiary_name, account_type, currency,
+         wallet_address, bank_fee_percent, balance, external_url, notes, status, created_at, updated_at,
+         initial_balance, account_category)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        accounts,
+    )
     beneficiaries = [
         ("ben-driver-partner", partner_id, "Partner Flota Caracas", "partner", "Banesco", "0134-1000-2000-3000", "corriente", "J-00000001-1", "VES", "active", ts),
         ("ben-provider-tech", partner_id, "Proveedor Tecnologia", "provider", "Provincial", "0108-2000-3000-4000", "corriente", "J-00000002-2", "VES", "active", ts),
     ]
-    conn.executemany("insert into beneficiaries values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", beneficiaries)
+    conn.executemany("insert or ignore into beneficiaries values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", beneficiaries)
+    categories = [
+        ("cat-pay-partners", "Pago a partners", "treasury_usage", "active", ts),
+        ("cat-pay-providers", "Pago a proveedor", "treasury_usage", "active", ts),
+    ]
+    conn.executemany("insert or ignore into categories values (?, ?, ?, ?, ?)", categories)
     settings = [
         ("rate_expiration_minutes", "7", ts),
         ("buy_statuses", "draft,pending_approval,approved,rejected,expired,executed,completed", ts),
-        ("sell_statuses", "request_created,in_review,rate_pending_approval,approved,in_process,executed,completed,expired", ts),
+        ("sell_statuses", "pending_master,in_negotiation,rate_pending_approval,approved,rejected,expired,executed,completed", ts),
         ("payment_statuses", "draft,pending_funding,funded,in_process,paid,completed,rejected,cancelled", ts),
     ]
-    conn.executemany("insert into settings values (?, ?, ?)", settings)
+    conn.executemany(
+        """
+        insert into settings values (?, ?, ?)
+        on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at
+        """,
+        settings,
+    )
     conn.commit()
     conn.close()
 
@@ -293,21 +337,24 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
-@app.get("/api/bootstrap")
-def bootstrap():
-    current_actor = actor()
-    operations = [operation_payload(row["id"]) for row in query("select id from operations order by created_at desc")]
-    return jsonify(
-        {
-            "actor": current_actor,
-            "partners": [row_to_dict(x) for x in query("select * from partners order by name")],
-            "users": [row_to_dict(x) for x in query("select * from users order by role, name")],
-            "accounts": [row_to_dict(x) for x in query("select * from accounts order by currency, name")],
-            "beneficiaries": [row_to_dict(x) for x in query("select * from beneficiaries order by category, name")],
-            "operations": operations,
-            "settings": {x["key"]: x["value"] for x in query("select * from settings")},
-        }
+@app.get("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
+
+
+def expire_pending_rates():
+    rows = query(
+        """
+        select id from operations
+        where status in ('pending_approval', 'rate_pending_approval')
+        and expires_at is not null
+        and datetime(expires_at) < datetime(?)
+        """,
+        (now_iso(),),
     )
+    for row in rows:
+        execute("update operations set status = 'expired', updated_at = ? where id = ?", (now_iso(), row["id"]))
+        log_event(row["id"], "expired", "La solicitud expiro automaticamente por vigencia de tasa.")
 
 
 def operation_payload(operation_id):
@@ -317,60 +364,191 @@ def operation_payload(operation_id):
     data = row_to_dict(op)
     data["attachments"] = [row_to_dict(x) for x in query("select * from attachments where operation_id = ? order by created_at", (operation_id,))]
     data["events"] = [row_to_dict(x) for x in query("select * from audit_events where operation_id = ? order by created_at", (operation_id,))]
-    return data
+    return enrich_operation(data)
 
 
-@app.post("/api/partners")
-def create_partner():
-    user, error = require_roles("magna_admin")
+def enrich_operation(op):
+    usd = Decimal(str(op.get("usd_amount") or 0))
+    ves = Decimal(str(op.get("ves_amount") or 0))
+    if usd == 0 and ves == 0:
+        amount = Decimal(str(op.get("final_amount") or op.get("requested_amount") or 0))
+        currency = op.get("final_currency") or op.get("requested_currency")
+        if currency == "USD":
+            usd = amount
+        elif currency == "VES":
+            ves = amount
+    op["usd_amount"] = money(usd)
+    op["ves_amount"] = money(ves)
+    op["account_for_table"] = op.get("source_account_id") or op.get("destination_account_id")
+    return op
+
+
+@app.get("/api/bootstrap")
+def bootstrap():
+    operations = [operation_payload(row["id"]) for row in query("select id from operations order by created_at desc")]
+    return jsonify(
+        {
+            "actor": actor(),
+            "partners": [row_to_dict(x) for x in query("select * from partners order by name")],
+            "users": [row_to_dict(x) for x in query("select * from users order by role, name")],
+            "accounts": [row_to_dict(x) for x in query("select * from accounts where status != 'deleted' order by owner, currency, name")],
+            "beneficiaries": [row_to_dict(x) for x in query("select * from beneficiaries where status != 'deleted' order by category, name")],
+            "categories": [row_to_dict(x) for x in query("select * from categories where status != 'deleted' order by kind, name")],
+            "operations": operations,
+            "settings": {x["key"]: x["value"] for x in query("select * from settings")},
+        }
+    )
+
+
+@app.post("/api/users")
+def create_user():
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
-    partner_id = make_id("PARTNER")
-    execute("insert into partners values (?, ?, 'active', ?)", (partner_id, data["name"], now_iso()))
-    return jsonify({"partner": row_to_dict(query("select * from partners where id = ?", (partner_id,), one=True))}), 201
+    data = parse_json()
+    user_id = data.get("id") or make_id("USR")
+    execute(
+        "insert into users values (?, ?, ?, ?, ?, 'active', ?)",
+        (user_id, data.get("partner_id") or "partner-yango", data["name"], data["email"], data["role"], now_iso()),
+    )
+    return jsonify({"user": row_to_dict(query("select * from users where id = ?", (user_id,), one=True))}), 201
+
+
+@app.put("/api/users/<user_id>")
+def update_user(user_id):
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    data = parse_json()
+    execute(
+        "update users set name = ?, email = ?, role = ?, status = ?, partner_id = ? where id = ?",
+        (data["name"], data["email"], data["role"], data.get("status", "active"), data.get("partner_id") or "partner-yango", user_id),
+    )
+    return jsonify({"user": row_to_dict(query("select * from users where id = ?", (user_id,), one=True))})
+
+
+@app.delete("/api/users/<user_id>")
+def delete_user(user_id):
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    execute("update users set status = 'inactive' where id = ?", (user_id,))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/categories")
+def create_category():
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    data = parse_json()
+    category_id = data.get("id") or make_id("CAT")
+    execute("insert into categories values (?, ?, ?, 'active', ?)", (category_id, data["name"], data.get("kind", "treasury_usage"), now_iso()))
+    return jsonify({"category": row_to_dict(query("select * from categories where id = ?", (category_id,), one=True))}), 201
+
+
+@app.put("/api/categories/<category_id>")
+def update_category(category_id):
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    data = parse_json()
+    execute("update categories set name = ?, kind = ?, status = ? where id = ?", (data["name"], data.get("kind", "treasury_usage"), data.get("status", "active"), category_id))
+    return jsonify({"category": row_to_dict(query("select * from categories where id = ?", (category_id,), one=True))})
+
+
+@app.delete("/api/categories/<category_id>")
+def delete_category(category_id):
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    execute("update categories set status = 'deleted' where id = ?", (category_id,))
+    return jsonify({"ok": True})
+
+
+def account_payload(data, owner):
+    return (
+        data.get("partner_id") or "partner-yango",
+        owner,
+        data["name"],
+        data.get("institution", ""),
+        data.get("account_number", ""),
+        data.get("beneficiary_name", data.get("holder", "")),
+        data.get("account_type", "bank"),
+        data.get("currency", "VES"),
+        data.get("wallet_address", ""),
+        money(data.get("bank_fee_percent", 0)),
+        money(data.get("balance", data.get("initial_balance", 0))),
+        data.get("external_url", ""),
+        data.get("notes", ""),
+        data.get("status", "active"),
+        money(data.get("initial_balance", data.get("balance", 0))),
+        "client" if owner == "client" else "operational",
+    )
 
 
 @app.post("/api/accounts")
 def create_account():
-    user, error = require_roles("magna_admin")
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
+    data = parse_json()
+    owner = data.get("owner", "magna")
     account_id = make_id("ACCT")
     ts = now_iso()
+    payload = account_payload(data, owner)
     execute(
         """
         insert into accounts
-        values (?, ?, 'magna', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        (id, partner_id, owner, name, institution, account_number, beneficiary_name, account_type, currency,
+         wallet_address, bank_fee_percent, balance, external_url, notes, status, created_at, updated_at,
+         initial_balance, account_category)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            account_id,
-            data.get("partner_id", "partner-yango"),
-            data["name"],
-            data.get("institution", ""),
-            data.get("account_number", ""),
-            data.get("beneficiary_name", "Magna Equity"),
-            data.get("account_type", "bank"),
-            data.get("currency", "VES"),
-            data.get("wallet_address", ""),
-            money(data.get("bank_fee_percent", 0)),
-            money(data.get("balance", 0)),
-            data.get("external_url", ""),
-            data.get("notes", ""),
-            ts,
-            ts,
-        ),
+        (account_id, *payload[:14], ts, ts, payload[14], payload[15]),
     )
     return jsonify({"account": row_to_dict(query("select * from accounts where id = ?", (account_id,), one=True))}), 201
 
 
-@app.post("/api/beneficiaries")
-def create_beneficiary():
-    user, error = require_roles("magna_admin", "super_approver", "treasury", "finance")
+@app.put("/api/accounts/<account_id>")
+def update_account(account_id):
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
+    data = parse_json()
+    current = query("select * from accounts where id = ?", (account_id,), one=True)
+    if not current:
+        return jsonify({"error": "Cuenta no encontrada."}), 404
+    owner = data.get("owner", current["owner"])
+    payload = account_payload(data, owner)
+    execute(
+        """
+        update accounts
+        set partner_id = ?, owner = ?, name = ?, institution = ?, account_number = ?, beneficiary_name = ?,
+            account_type = ?, currency = ?, wallet_address = ?, bank_fee_percent = ?, balance = ?,
+            external_url = ?, notes = ?, status = ?, initial_balance = ?, account_category = ?, updated_at = ?
+        where id = ?
+        """,
+        (*payload, now_iso(), account_id),
+    )
+    return jsonify({"account": row_to_dict(query("select * from accounts where id = ?", (account_id,), one=True))})
+
+
+@app.delete("/api/accounts/<account_id>")
+def delete_account(account_id):
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    execute("update accounts set status = 'deleted', updated_at = ? where id = ?", (now_iso(), account_id))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/beneficiaries")
+def create_beneficiary():
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    if error:
+        return error
+    data = parse_json()
     beneficiary_id = make_id("BEN")
     execute(
         """
@@ -379,7 +557,7 @@ def create_beneficiary():
         """,
         (
             beneficiary_id,
-            data.get("partner_id", user.get("partner_id") or "partner-yango"),
+            data.get("partner_id") or user.get("partner_id") or "partner-yango",
             data["name"],
             data["category"],
             data.get("bank", ""),
@@ -393,261 +571,292 @@ def create_beneficiary():
     return jsonify({"beneficiary": row_to_dict(query("select * from beneficiaries where id = ?", (beneficiary_id,), one=True))}), 201
 
 
-@app.post("/api/buy-requests")
-def create_buy_request():
-    user, error = require_roles("magna_admin")
+@app.put("/api/beneficiaries/<beneficiary_id>")
+def update_beneficiary(beneficiary_id):
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
     if error:
         return error
-    data = request.get_json(force=True)
-    ves_amount = Decimal(str(data["ves_amount"]))
-    rate = Decimal(str(data["rate"]))
-    account = query("select * from accounts where id = ?", (data["ves_account_id"],), one=True)
-    fee_percent = Decimal(str(data.get("bank_fee_percent", account["bank_fee_percent"] if account else 0)))
-    fee_amount = (ves_amount * fee_percent / Decimal("100")).quantize(Decimal("0.01"))
-    net_ves = ves_amount - fee_amount
-    usd_amount = (net_ves / rate).quantize(Decimal("0.01"))
-    minutes = int(get_setting("rate_expiration_minutes", "7"))
-    operation_id = make_id("BUY")
+    data = parse_json()
+    execute(
+        """
+        update beneficiaries
+        set name = ?, category = ?, bank = ?, account_number = ?, account_type = ?,
+            identification = ?, currency = ?, status = ?
+        where id = ?
+        """,
+        (
+            data["name"],
+            data["category"],
+            data.get("bank", ""),
+            data.get("account_number", ""),
+            data.get("account_type", "corriente"),
+            data.get("identification", ""),
+            data.get("currency", "VES"),
+            data.get("status", "active"),
+            beneficiary_id,
+        ),
+    )
+    return jsonify({"beneficiary": row_to_dict(query("select * from beneficiaries where id = ?", (beneficiary_id,), one=True))})
+
+
+@app.delete("/api/beneficiaries/<beneficiary_id>")
+def delete_beneficiary(beneficiary_id):
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    if error:
+        return error
+    execute("update beneficiaries set status = 'deleted' where id = ?", (beneficiary_id,))
+    return jsonify({"ok": True})
+
+
+def normalize_treasury_amounts(data):
+    operation_side = data["operation_side"]
+    input_currency = data.get("input_currency")
+    rate = Decimal(str(data.get("expected_rate") or data.get("rate") or 0))
+    usd_amount = Decimal(str(data.get("usd_amount") or 0))
+    ves_amount = Decimal(str(data.get("ves_amount") or 0))
+    if input_currency == "USD" and usd_amount and rate:
+        ves_amount = (usd_amount * rate).quantize(Decimal("0.01"))
+    if input_currency == "VES" and ves_amount and rate:
+        usd_amount = (ves_amount / rate).quantize(Decimal("0.01"))
+    op_type = "buy_usd" if operation_side == "buy" else "sell_usd"
+    if op_type == "buy_usd":
+        usd_signed = abs(usd_amount)
+        ves_signed = -abs(ves_amount)
+    else:
+        usd_signed = -abs(usd_amount)
+        ves_signed = abs(ves_amount)
+    return op_type, money(usd_signed), money(ves_signed)
+
+
+@app.post("/api/treasury-requests")
+def create_treasury_request():
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    if error:
+        return error
+    data = request.form.to_dict()
+    if request.is_json:
+        data = request.get_json(force=True)
+    op_type, usd_amount, ves_amount = normalize_treasury_amounts(data)
+    operation_id = make_id("BUY" if op_type == "buy_usd" else "SELL")
     ts = now_iso()
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    metadata = {
+        "usage_category_id": data.get("usage_category_id"),
+        "input_currency": data.get("input_currency"),
+        "comment": data.get("comment", ""),
+        "document_type": data.get("document_type", ""),
+    }
     execute(
         """
         insert into operations
         (id, partner_id, type, status, reason, requested_currency, requested_amount, rate,
-         bank_fee_percent, bank_fee_amount, source_account_id, destination_account_id,
-         final_currency, final_amount, created_by, expires_at, metadata, created_at, updated_at)
-        values (?, ?, 'buy_usd', 'pending_approval', ?, 'VES', ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?)
+         source_account_id, destination_account_id, beneficiary_id, final_currency, final_amount,
+         created_by, metadata, usd_amount, ves_amount, created_at, updated_at)
+        values (?, ?, ?, 'pending_master', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             operation_id,
-            data.get("partner_id", "partner-yango"),
-            data.get("reason", "Compra de dolares"),
-            money(ves_amount),
-            money(rate),
-            money(fee_percent),
-            money(fee_amount),
-            data["ves_account_id"],
-            data["usd_account_id"],
-            money(usd_amount),
+            data.get("partner_id") or user.get("partner_id") or "partner-yango",
+            op_type,
+            data.get("reason") or ("Compra USD" if op_type == "buy_usd" else "Venta USD"),
+            data.get("input_currency") or "USD",
+            money(data.get("usd_amount") or data.get("ves_amount") or 0),
+            money(data.get("expected_rate") or 0),
+            data.get("source_account_id") or None,
+            data.get("destination_account_id") or None,
+            data.get("beneficiary_id") or None,
+            "USD" if data.get("input_currency") == "USD" else "VES",
+            abs(usd_amount if data.get("input_currency") == "USD" else ves_amount),
             user["id"],
-            expires_at,
-            json.dumps({"net_ves": money(net_ves), "expiration_minutes": minutes}),
+            json.dumps(metadata),
+            usd_amount,
+            ves_amount,
             ts,
             ts,
         ),
     )
-    log_event(operation_id, "created", f"Magna creo solicitud de compra por {money(usd_amount):,.2f} USD.", user["id"])
+    log_event(operation_id, "created", "Solicitud de tesoreria creada.", user["id"], data.get("comment"))
+    save_request_files(operation_id, user["id"])
     return jsonify({"operation": operation_payload(operation_id)}), 201
 
 
-@app.post("/api/sell-requests")
-def create_sell_request():
-    user, error = require_roles("super_approver", "treasury", "finance")
+@app.post("/api/operations/<operation_id>/status")
+def update_operation_status(operation_id):
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
-    operation_id = make_id("SELL")
-    ts = now_iso()
-    execute(
-        """
-        insert into operations
-        (id, partner_id, type, status, reason, requested_currency, requested_amount, final_currency,
-         created_by, metadata, created_at, updated_at)
-        values (?, ?, 'sell_usd', 'in_review', ?, 'VES', ?, 'VES', ?, ?, ?, ?)
-        """,
-        (
-            operation_id,
-            user["partner_id"],
-            data["reason"],
-            money(data["ves_needed"]),
-            user["id"],
-            json.dumps({"usage_type": data.get("usage_type", "payment")}),
-            ts,
-            ts,
-        ),
-    )
-    log_event(operation_id, "created", "Yango solicito bolivares; se autogenero venta de USD para Magna.", user["id"], data.get("comment"))
-    return jsonify({"operation": operation_payload(operation_id)}), 201
+    data = parse_json()
+    status = data["status"]
+    execute("update operations set status = ?, updated_at = ? where id = ?", (status, now_iso(), operation_id))
+    log_event(operation_id, "status_changed", f"Master cambio estatus a {status}.", user["id"], data.get("comment"))
+    return jsonify({"operation": operation_payload(operation_id)})
 
 
-@app.post("/api/payments")
-def create_payment():
-    user, error = require_roles("super_approver", "finance")
+@app.post("/api/operations/<operation_id>/rate")
+def set_operation_rate(operation_id):
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
-    sale_id = make_id("SELL")
-    payment_id = make_id("PAY")
-    ts = now_iso()
-    execute(
-        """
-        insert into operations
-        (id, partner_id, type, status, reason, requested_currency, requested_amount, beneficiary_id,
-         final_currency, created_by, metadata, created_at, updated_at)
-        values (?, ?, 'sell_usd', 'in_review', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            sale_id,
-            user["partner_id"],
-            f"Fondeo para pago: {data['payment_type']}",
-            data.get("currency", "VES"),
-            money(data["amount"]),
-            data["beneficiary_id"],
-            data.get("currency", "VES"),
-            user["id"],
-            json.dumps({"usage_type": data["payment_type"], "source": "payment_request"}),
-            ts,
-            ts,
-        ),
-    )
-    execute(
-        """
-        insert into operations
-        (id, partner_id, type, status, reason, requested_currency, requested_amount, beneficiary_id,
-         linked_operation_id, final_currency, created_by, metadata, created_at, updated_at)
-        values (?, ?, 'payment', 'pending_funding', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            payment_id,
-            user["partner_id"],
-            data["payment_type"],
-            data.get("currency", "VES"),
-            money(data["amount"]),
-            data["beneficiary_id"],
-            sale_id,
-            data.get("currency", "VES"),
-            user["id"],
-            json.dumps({"document_type": data.get("document_type", "invoice"), "notes": data.get("notes", "")}),
-            ts,
-            ts,
-        ),
-    )
-    log_event(sale_id, "created", "Venta de USD autogenerada para fondear pago.", user["id"], data.get("notes"))
-    log_event(payment_id, "created", "Solicitud de pago creada y vinculada a venta de USD.", user["id"], data.get("notes"), {"linked_sale": sale_id})
-    if data.get("support_name"):
-        add_attachment(payment_id, "Soporte documental", data["support_name"], user["id"])
-    return jsonify({"payment": operation_payload(payment_id), "sale": operation_payload(sale_id)}), 201
-
-
-@app.post("/api/sell-requests/<operation_id>/rate")
-def set_sell_rate(operation_id):
-    user, error = require_roles("magna_admin")
-    if error:
-        return error
-    data = request.get_json(force=True)
+    data = parse_json()
+    op = operation_payload(operation_id)
+    if not op:
+        return jsonify({"error": "Operacion no encontrada."}), 404
+    rate = Decimal(str(data["rate"]))
+    binance_rate = Decimal(str(data.get("binance_rate") or 0))
+    spread = Decimal("0")
+    if binance_rate:
+        spread = ((rate - binance_rate) / binance_rate * Decimal("100")).quantize(Decimal("0.01"))
     minutes = int(get_setting("rate_expiration_minutes", "7"))
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
-    requested_amount = Decimal(str(query("select requested_amount from operations where id = ?", (operation_id,), one=True)["requested_amount"]))
-    rate = Decimal(str(data["rate"]))
-    usd_to_sell = (requested_amount / rate).quantize(Decimal("0.01"))
+    usd_amount = Decimal(str(op["usd_amount"]))
+    ves_amount = Decimal(str(op["ves_amount"]))
+    if usd_amount and not ves_amount:
+        ves_amount = -usd_amount * rate if op["type"] == "buy_usd" else abs(usd_amount) * rate
+    if ves_amount and not usd_amount:
+        usd_amount = abs(ves_amount) / rate
+        usd_amount = usd_amount if op["type"] == "buy_usd" else -usd_amount
     execute(
         """
         update operations
-        set status = 'rate_pending_approval', rate = ?, final_currency = 'USD', final_amount = ?,
-            source_account_id = ?, destination_account_id = ?, expires_at = ?, updated_at = ?, metadata = json_set(metadata, '$.expiration_minutes', ?)
-        where id = ? and type = 'sell_usd'
+        set status = 'rate_pending_approval', rate = ?, binance_rate = ?, spread = ?,
+            source_account_id = coalesce(?, source_account_id),
+            destination_account_id = coalesce(?, destination_account_id),
+            usd_amount = ?, ves_amount = ?, expires_at = ?, updated_at = ?
+        where id = ?
         """,
-        (money(rate), money(usd_to_sell), data["usd_account_id"], data["ves_account_id"], expires_at, now_iso(), minutes, operation_id),
+        (
+            money(rate),
+            money(binance_rate),
+            money(spread),
+            data.get("source_account_id"),
+            data.get("destination_account_id"),
+            money(usd_amount),
+            money(ves_amount),
+            expires_at,
+            now_iso(),
+            operation_id,
+        ),
     )
-    log_event(operation_id, "rate_loaded", f"Magna cargo tasa para vender {money(usd_to_sell):,.2f} USD.", user["id"], data.get("comment"))
+    log_event(operation_id, "rate_loaded", "Master cargo tasa y referencia Binance.", user["id"], data.get("comment"), {"spread": money(spread)})
     return jsonify({"operation": operation_payload(operation_id)})
 
 
 @app.post("/api/operations/<operation_id>/decision")
 def decide_operation(operation_id):
-    user, error = require_roles("super_approver", "treasury", "finance")
+    user, error = require_roles(*CLIENT_ROLES)
     if error:
         return error
-    data = request.get_json(force=True)
+    data = parse_json()
     comment = (data.get("comment") or "").strip()
-    decision = data.get("decision")
     if not comment:
         return jsonify({"error": "El comentario es obligatorio para trazabilidad."}), 400
-    op = query("select * from operations where id = ?", (operation_id,), one=True)
-    if not op:
-        return jsonify({"error": "Operacion no encontrada."}), 404
-    if op["status"] == "expired":
-        return jsonify({"error": "La solicitud ya expiro. Magna debe emitir una nueva tasa."}), 400
-    new_status = "approved" if decision == "approve" else "rejected"
-    execute("update operations set status = ?, approved_by = ?, updated_at = ? where id = ?", (new_status, user["id"], now_iso(), operation_id))
-    log_event(operation_id, new_status, f"Yango marco la operacion como {new_status}.", user["id"], comment)
+    decision = data.get("decision")
+    status = "approved" if decision == "approve" else "rejected"
+    execute("update operations set status = ?, approved_by = ?, updated_at = ? where id = ?", (status, user["id"], now_iso(), operation_id))
+    log_event(operation_id, status, f"Cliente marco la operacion como {status}.", user["id"], comment)
     return jsonify({"operation": operation_payload(operation_id)})
 
 
-def add_attachment(operation_id, label, filename, user_id):
+def save_request_files(operation_id, user_id):
+    for key, file in request.files.items():
+        if not file or not file.filename:
+            continue
+        label = request.form.get(f"{key}_label") or key.replace("_", " ").title()
+        store_attachment(operation_id, label, file, user_id)
+
+
+def store_attachment(operation_id, label, file, user_id):
+    original = secure_filename(file.filename) or "attachment"
+    folder = UPLOAD_DIR / operation_id
+    folder.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}_{original}"
+    stored_path = f"{operation_id}/{stored_name}"
+    file.save(folder / stored_name)
+    content_type = file.mimetype or mimetypes.guess_type(original)[0] or "application/octet-stream"
     attachment_id = make_id("ATT")
     execute(
-        "insert into attachments values (?, ?, ?, ?, ?, ?)",
-        (attachment_id, operation_id, label, filename, user_id, now_iso()),
+        """
+        insert into attachments
+        (id, operation_id, label, filename, uploaded_by, created_at, stored_path, content_type)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (attachment_id, operation_id, label, original, user_id, now_iso(), stored_path, content_type),
     )
-    log_event(operation_id, "attachment_added", f"Soporte cargado: {label}.", user_id, filename)
+    log_event(operation_id, "attachment_added", f"Soporte cargado: {label}.", user_id, original)
+
+
+@app.post("/api/operations/<operation_id>/attachments")
+def upload_operation_attachment(operation_id):
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    if error:
+        return error
+    save_request_files(operation_id, user["id"])
+    return jsonify({"operation": operation_payload(operation_id)})
+
+
+def update_balance(account_id, delta, reason, operation_id):
+    if not account_id:
+        return
+    account = query("select * from accounts where id = ?", (account_id,), one=True)
+    if not account:
+        return
+    new_balance = money(account["balance"] + delta)
+    execute("update accounts set balance = ?, updated_at = ? where id = ?", (new_balance, now_iso(), account_id))
+    log_event(operation_id, "balance_updated", f"{reason}: {delta:+,.2f} {account['currency']}", metadata={"account_id": account_id, "new_balance": new_balance})
 
 
 @app.post("/api/operations/<operation_id>/execute")
 def execute_operation(operation_id):
-    user, error = require_roles("magna_admin")
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
-    op = query("select * from operations where id = ?", (operation_id,), one=True)
+    data = request.form.to_dict() if not request.is_json else request.get_json(force=True)
+    op = operation_payload(operation_id)
     if not op:
         return jsonify({"error": "Operacion no encontrada."}), 404
-    final_amount = money(data.get("final_amount", op["final_amount"] or op["requested_amount"]))
-    status = "paid" if op["type"] == "payment" else "executed"
+    source_account = data.get("source_account_id") or op.get("source_account_id")
+    destination_account = data.get("destination_account_id") or op.get("destination_account_id")
+    usd_amount = money(data.get("usd_amount", op.get("usd_amount") or 0))
+    ves_amount = money(data.get("ves_amount", op.get("ves_amount") or 0))
     execute(
         """
         update operations
-        set status = ?, final_amount = ?, source_account_id = coalesce(?, source_account_id),
-            destination_account_id = coalesce(?, destination_account_id), updated_at = ?
+        set status = 'executed', source_account_id = ?, destination_account_id = ?,
+            usd_amount = ?, ves_amount = ?, executed_at = ?, updated_at = ?
         where id = ?
         """,
-        (status, final_amount, data.get("source_account_id"), data.get("destination_account_id"), now_iso(), operation_id),
+        (source_account, destination_account, usd_amount, ves_amount, now_iso(), now_iso(), operation_id),
     )
-    for item in data.get("attachments", []):
-        if item.get("filename"):
-            add_attachment(operation_id, item.get("label", "Soporte"), item["filename"], user["id"])
-
-    refreshed = query("select * from operations where id = ?", (operation_id,), one=True)
-    if refreshed["type"] == "buy_usd":
-        update_balance(refreshed["source_account_id"], money(refreshed["requested_amount"]), "Recepcion de bolivares", operation_id)
-        update_balance(refreshed["source_account_id"], -money(refreshed["bank_fee_amount"]), "Comision bancaria categorizada", operation_id)
-        update_balance(refreshed["destination_account_id"], money(refreshed["final_amount"]), "Recepcion de dolares", operation_id)
-    elif refreshed["type"] == "sell_usd":
-        update_balance(refreshed["source_account_id"], -money(refreshed["final_amount"]), "Salida de dolares vendidos", operation_id)
-        update_balance(refreshed["destination_account_id"], money(refreshed["requested_amount"]), "Recepcion de bolivares por venta", operation_id)
-        linked_payment = query("select id from operations where linked_operation_id = ? and type = 'payment'", (operation_id,), one=True)
-        if linked_payment:
-            execute("update operations set status = 'funded', updated_at = ? where id = ?", (now_iso(), linked_payment["id"]))
-            log_event(linked_payment["id"], "funded", "Pago marcado como fondeado por venta ejecutada.", user["id"], metadata={"sale_id": operation_id})
-    elif refreshed["type"] == "payment":
-        update_balance(refreshed["source_account_id"], -final_amount, "Dispersion de pago", operation_id)
-
-    log_event(operation_id, "executed", "Magna ejecuto la operacion.", user["id"], data.get("comment"))
+    save_request_files(operation_id, user["id"])
+    if op["type"] == "buy_usd":
+        update_balance(source_account, ves_amount, "Salida VES por compra USD", operation_id)
+        update_balance(destination_account, usd_amount, "Entrada USD por compra", operation_id)
+    elif op["type"] == "sell_usd":
+        update_balance(source_account, usd_amount, "Salida USD por venta", operation_id)
+        update_balance(destination_account, ves_amount, "Entrada VES por venta", operation_id)
+    elif op["type"] == "payment":
+        update_balance(source_account, -abs(ves_amount or op.get("requested_amount") or 0), "Dispersion de pago", operation_id)
+    log_event(operation_id, "executed", "Master ejecuto la operacion y cargo soportes.", user["id"], data.get("comment"))
     return jsonify({"operation": operation_payload(operation_id)})
 
 
 @app.post("/api/operations/<operation_id>/complete")
 def complete_operation(operation_id):
-    user, error = require_roles("magna_admin")
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
     execute("update operations set status = 'completed', updated_at = ? where id = ?", (now_iso(), operation_id))
-    log_event(operation_id, "completed", "Operacion cerrada y conciliada.", user["id"], request.get_json(silent=True, force=False) or {})
+    log_event(operation_id, "completed", "Operacion cerrada y conciliada.", user["id"])
     return jsonify({"operation": operation_payload(operation_id)})
 
 
 @app.post("/api/settings")
 def update_settings():
-    user, error = require_roles("magna_admin")
+    user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    data = request.get_json(force=True)
-    ts = now_iso()
+    data = parse_json()
     for key, value in data.items():
-        execute(
-            "insert into settings(key, value, updated_at) values (?, ?, ?) on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at",
-            (key, str(value), ts),
-        )
+        set_setting(key, value)
     return jsonify({"settings": {x["key"]: x["value"] for x in query("select * from settings")}})
 
 

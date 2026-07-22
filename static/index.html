@@ -7,251 +7,68 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <aside class="sidebar">
-      <div class="brand">
-        <img class="brand-logo" src="/static/assets/magna-logo.jpg" alt="Magna Equity" />
-        <div>
-          <strong>Partner Portal</strong>
-          <span>Magna Equity x Yango</span>
-        </div>
-      </div>
-      <nav class="nav" aria-label="Principal">
-        <button class="nav-item active" data-view="dashboard">Dashboard</button>
-        <button class="nav-item" data-view="approvals">Aprobaciones</button>
-        <button class="nav-item" data-view="operations">Operaciones</button>
-        <button class="nav-item" data-view="payments">Pagos</button>
-        <button class="nav-item" data-view="accounts">Cuentas</button>
-        <button class="nav-item" data-view="balances">Saldos</button>
-        <button class="nav-item" data-view="admin">Admin</button>
-      </nav>
-      <div class="role-switcher">
-        <label for="roleSelect">Vista</label>
-        <select id="roleSelect">
-          <option value="magna_admin">Magna Admin</option>
-          <option value="super_approver">Yango Super-approver</option>
-          <option value="treasury">Yango Tesorería</option>
-          <option value="finance">Yango Finanzas</option>
-        </select>
-      </div>
-    </aside>
-
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Private operations desk</p>
-          <h1 id="viewTitle">Dashboard operativo</h1>
-        </div>
-        <div class="status-pill">
-          <span></span>
-          <strong id="actorName">Cargando...</strong>
-        </div>
+    <section id="landing" class="landing">
+      <div class="landing-glow"></div>
+      <header class="landing-header">
+        <img src="/static/assets/magna-logo.jpg" alt="Magna Equity" />
+        <button id="landingLang" class="ghost-button" type="button">ES / EN</button>
       </header>
+      <main class="landing-copy">
+        <p class="eyebrow">Partner Treasury Portal</p>
+        <h1>Private operating infrastructure for FX, payments and reconciliation.</h1>
+        <p>Secure approval workflows, account-level traceability and auditable execution between Magna Equity and Yango.</p>
+        <button id="enterApp" class="primary large" type="button">Login</button>
+      </main>
+      <aside class="login-panel">
+        <span>Secure access</span>
+        <strong>Magna Equity x Yango</strong>
+        <p>Use role view for demo validation. Production auth is pending.</p>
+      </aside>
+    </section>
 
-      <section id="toast" class="toast" hidden></section>
-
-      <section id="dashboard" class="view active">
-        <div class="metrics" id="metrics"></div>
-        <div class="split-layout">
-          <section class="panel">
-            <div class="panel-header">
-              <h2>Actividad reciente</h2>
-            </div>
-            <div id="recentActivity" class="timeline compact"></div>
-          </section>
-          <section class="panel">
-            <div class="panel-header">
-              <h2>Operaciones críticas</h2>
-            </div>
-            <div id="criticalOps" class="operation-list"></div>
-          </section>
+    <section id="appShell" class="app-shell hidden">
+      <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+      <aside id="drawer" class="drawer">
+        <div class="drawer-brand">
+          <img src="/static/assets/magna-logo.jpg" alt="Magna Equity" />
+          <button id="closeDrawer" class="icon-button" type="button" aria-label="Cerrar menu">×</button>
         </div>
-      </section>
+        <nav id="nav" class="nav"></nav>
+        <div class="drawer-controls">
+          <label>
+            <span data-i18n="roleView">Vista / rol</span>
+            <select id="roleSelect">
+              <option value="magna_admin">Master · Magna</option>
+              <option value="super_approver">Cliente · Super-approver</option>
+              <option value="treasury">Cliente · Tesorería</option>
+              <option value="finance">Cliente · Finanzas</option>
+            </select>
+          </label>
+        </div>
+      </aside>
 
-      <section id="approvals" class="view">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Bandeja de aprobaciones</h2>
-            <span class="muted">Tasas vigentes y operaciones pendientes</span>
+      <main class="workspace">
+        <header class="topbar">
+          <button id="openDrawer" class="menu-button" type="button" aria-label="Abrir menu">☰</button>
+          <div>
+            <p id="viewEyebrow" class="eyebrow">Treasury command center</p>
+            <h1 id="viewTitle">Dashboard</h1>
           </div>
-          <div id="approvalList" class="operation-list"></div>
-        </div>
-      </section>
-
-      <section id="operations" class="view">
-        <div class="toolbar">
-          <select id="filterType">
-            <option value="">Tipo</option>
-            <option value="buy_usd">Compra USD</option>
-            <option value="sell_usd">Venta USD</option>
-            <option value="payment">Pago</option>
-          </select>
-          <select id="filterStatus">
-            <option value="">Estatus</option>
-          </select>
-          <input id="filterSearch" placeholder="Buscar ID, razón o estatus" />
-        </div>
-        <div class="split-layout wide">
-          <section class="panel">
-            <div class="panel-header">
-              <h2>Libro de operaciones</h2>
+          <div class="top-actions">
+            <button id="languageToggle" class="ghost-button" type="button">ES</button>
+            <div class="actor-pill">
+              <span></span>
+              <strong id="actorName">Loading</strong>
             </div>
-            <div id="operationList" class="operation-list"></div>
-          </section>
-          <section class="panel detail-panel">
-            <div class="panel-header">
-              <h2>Detalle</h2>
-            </div>
-            <div id="operationDetail" class="empty-state">Selecciona una operación.</div>
-          </section>
-        </div>
-      </section>
-
-      <section id="payments" class="view">
-        <div class="split-layout">
-          <form id="paymentForm" class="panel form-panel">
-            <div class="panel-header">
-              <h2>Nueva solicitud de pago</h2>
-            </div>
-            <label>Tipo de pago
-              <select name="payment_type">
-                <option value="partner">Partner</option>
-                <option value="provider">Proveedor</option>
-              </select>
-            </label>
-            <label>Beneficiario
-              <select name="beneficiary_id" id="paymentBeneficiary"></select>
-            </label>
-            <label>Monto
-              <input name="amount" type="number" min="0" step="0.01" required />
-            </label>
-            <label>Moneda
-              <select name="currency">
-                <option value="VES">VES</option>
-                <option value="USD">USD</option>
-              </select>
-            </label>
-            <label>Soporte
-              <select name="document_type">
-                <option value="invoice">Invoice / factura</option>
-                <option value="delivery_note">Nota de entrega</option>
-                <option value="internal_support">Soporte interno</option>
-              </select>
-            </label>
-            <label>Nombre del archivo
-              <input name="support_name" placeholder="factura-001.pdf" required />
-            </label>
-            <label>Notas
-              <textarea name="notes" rows="3"></textarea>
-            </label>
-            <button type="submit" class="primary">Crear pago</button>
-          </form>
-
-          <form id="sellForm" class="panel form-panel">
-            <div class="panel-header">
-              <h2>Solicitud de bolívares</h2>
-            </div>
-            <label>Uso
-              <select name="usage_type">
-                <option value="payment_partner">Pago a partners</option>
-                <option value="payment_provider">Pago a proveedores</option>
-              </select>
-            </label>
-            <label>Bolívares requeridos
-              <input name="ves_needed" type="number" min="0" step="0.01" required />
-            </label>
-            <label>Razón
-              <input name="reason" placeholder="Fondeo nómina partners" required />
-            </label>
-            <label>Comentario
-              <textarea name="comment" rows="3"></textarea>
-            </label>
-            <button type="submit" class="primary">Solicitar venta USD</button>
-          </form>
-        </div>
-      </section>
-
-      <section id="accounts" class="view">
-        <div class="split-layout">
-          <section class="panel">
-            <div class="panel-header">
-              <h2>Cuentas y wallets</h2>
-            </div>
-            <div id="accountList" class="account-grid"></div>
-          </section>
-          <form id="beneficiaryForm" class="panel form-panel">
-            <div class="panel-header">
-              <h2>Nuevo beneficiario</h2>
-            </div>
-            <label>Nombre
-              <input name="name" required />
-            </label>
-            <label>Categoría
-              <select name="category">
-                <option value="partner">Partner</option>
-                <option value="provider">Proveedor</option>
-              </select>
-            </label>
-            <label>Banco
-              <input name="bank" required />
-            </label>
-            <label>Número de cuenta
-              <input name="account_number" required />
-            </label>
-            <label>Identificación
-              <input name="identification" />
-            </label>
-            <button type="submit" class="primary">Guardar beneficiario</button>
-          </form>
-        </div>
-      </section>
-
-      <section id="balances" class="view">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Saldos conciliables</h2>
-            <span class="muted">Incluye comisiones bancarias categorizadas</span>
           </div>
-          <div id="balanceGrid" class="balance-grid"></div>
-        </div>
-      </section>
+        </header>
 
-      <section id="admin" class="view">
-        <div class="split-layout">
-          <form id="buyForm" class="panel form-panel">
-            <div class="panel-header">
-              <h2>Nueva compra USD</h2>
-            </div>
-            <label>Bolívares recibidos
-              <input name="ves_amount" type="number" min="0" step="0.01" required />
-            </label>
-            <label>Tasa propuesta
-              <input name="rate" type="number" min="0" step="0.0001" required />
-            </label>
-            <label>Cuenta receptora VES
-              <select name="ves_account_id" id="buyVesAccount"></select>
-            </label>
-            <label>Cuenta receptora USD
-              <select name="usd_account_id" id="buyUsdAccount"></select>
-            </label>
-            <label>Razón
-              <input name="reason" value="Compra de dólares para Yango" />
-            </label>
-            <button type="submit" class="primary">Enviar a aprobación</button>
-          </form>
+        <section id="toast" class="toast" hidden></section>
+        <section id="viewBody" class="view-body"></section>
+      </main>
+    </section>
 
-          <form id="settingsForm" class="panel form-panel">
-            <div class="panel-header">
-              <h2>Configuración</h2>
-            </div>
-            <label>Vigencia de tasa en minutos
-              <input name="rate_expiration_minutes" id="expirationMinutes" type="number" min="1" max="60" required />
-            </label>
-            <button type="submit" class="primary">Guardar configuración</button>
-          </form>
-        </div>
-      </section>
-    </main>
-
+    <div id="modalRoot"></div>
     <script src="/static/app.js"></script>
   </body>
 </html>
