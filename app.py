@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from flask import Flask, g, jsonify, request, send_from_directory
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 
@@ -21,11 +22,11 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 ROLE_MASTER = "magna_admin"
 CLIENT_ROLES = ("super_approver", "treasury", "finance")
-DEMO_PASSWORDS = {
-    "ops@magnaequity.com": {"env": "MAGNA_ADMIN_PASSWORD", "role": ROLE_MASTER},
-    "approver@yango.com": {"env": "YANGO_APPROVER_PASSWORD", "role": "super_approver"},
-    "treasury@yango.com": {"env": "YANGO_TREASURY_PASSWORD", "role": "treasury"},
-    "finance@yango.com": {"env": "YANGO_FINANCE_PASSWORD", "role": "finance"},
+INITIAL_PASSWORD_ENVS = {
+    "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
+    "usr-yango-super": "YANGO_APPROVER_PASSWORD",
+    "usr-yango-treasury": "YANGO_TREASURY_PASSWORD",
+    "usr-yango-finance": "YANGO_FINANCE_PASSWORD",
 }
 
 
@@ -76,10 +77,16 @@ def row_to_dict(row):
                 data[key] = json.loads(data[key])
             except json.JSONDecodeError:
                 data[key] = {}
+    data.pop("password_hash", None)
     return data
 
 
 def actor():
+    user_id = request.headers.get("X-User-Id") or request.args.get("user_id")
+    if user_id:
+        user = query("select * from users where id = ? and status = 'active'", (user_id,), one=True)
+        if user:
+            return row_to_dict(user)
     role = request.headers.get("X-Role") or request.args.get("role") or ROLE_MASTER
     user = query("select * from users where role = ? order by id limit 1", (role,), one=True)
     if not user:
@@ -262,6 +269,7 @@ def init_db():
     )
     add_column_if_missing(conn, "accounts", "initial_balance", "real default 0")
     add_column_if_missing(conn, "accounts", "account_category", "text default 'operational'")
+    add_column_if_missing(conn, "users", "password_hash", "text")
     add_column_if_missing(conn, "operations", "usd_amount", "real default 0")
     add_column_if_missing(conn, "operations", "ves_amount", "real default 0")
     add_column_if_missing(conn, "operations", "binance_rate", "real default 0")
@@ -287,8 +295,22 @@ def seed_db():
         ("usr-yango-treasury", partner_id, "Tesoreria Yango", "treasury@yango.com", "treasury", "active", ts),
         ("usr-yango-finance", partner_id, "Finanzas Yango", "finance@yango.com", "finance", "active", ts),
     ]
-    conn.executemany("insert or ignore into users values (?, ?, ?, ?, ?, ?, ?)", users)
+    conn.executemany(
+        """
+        insert or ignore into users
+        (id, partner_id, name, email, role, status, created_at)
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        users,
+    )
     conn.execute("update users set email = ? where id = ?", ("treasury@yango.com", "usr-yango-treasury"))
+    for user_id, env_name in INITIAL_PASSWORD_ENVS.items():
+        initial_password = os.environ.get(env_name)
+        if initial_password:
+            conn.execute(
+                "update users set password_hash = coalesce(password_hash, ?) where id = ?",
+                (generate_password_hash(initial_password, method="pbkdf2:sha256", salt_length=16), user_id),
+            )
     accounts = [
         ("acct-ves-magna", partner_id, "magna", "Cuenta operativa VES", "Banco Nacional", "0102-0000-0000-0000", "Magna Equity", "bank", "VES", "", 0.35, 3850000, "", "Cuenta receptora de bolivares.", "active", ts, ts, 3850000, "operational"),
         ("acct-usd-magna", partner_id, "magna", "Custodia USD Magna", "BitGo", "", "Magna Equity", "wallet", "USD", "0x8d1...demo", 0, 132500, "https://www.bitgo.com/", "Wallet visible para consulta externa.", "active", ts, ts, 132500, "operational"),
@@ -412,16 +434,37 @@ def login():
     data = request.get_json(force=True)
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
-    credentials = DEMO_PASSWORDS.get(email)
-    configured_password = os.environ.get(credentials["env"]) if credentials else None
-    if not credentials or not configured_password:
-        return jsonify({"error": "Login no configurado. Define las claves demo en Railway."}), 503
-    if configured_password != password:
+    user = query("select * from users where lower(email) = ? and status = 'active'", (email,), one=True)
+    if not user or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
         return jsonify({"error": "Credenciales invalidas."}), 401
-    user = query("select * from users where email = ? and role = ?", (email, credentials["role"]), one=True)
-    if not user:
+    return jsonify({"user": row_to_dict(user), "role": user["role"]})
+
+
+def password_hash_from_data(data, required=False):
+    password = data.get("password") or ""
+    if required and not password:
+        return None, (jsonify({"error": "La clave es obligatoria."}), 400)
+    if not password:
+        return None, None
+    if len(password) < 10:
+        return None, (jsonify({"error": "La clave debe tener al menos 10 caracteres."}), 400)
+    return generate_password_hash(password, method="pbkdf2:sha256", salt_length=16), None
+
+
+@app.post("/api/users/<user_id>/password")
+def update_user_password(user_id):
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    data = parse_json()
+    password_hash, password_error = password_hash_from_data(data, required=True)
+    if password_error:
+        return password_error
+    target = query("select * from users where id = ?", (user_id,), one=True)
+    if not target:
         return jsonify({"error": "Usuario no encontrado."}), 404
-    return jsonify({"user": row_to_dict(user), "role": credentials["role"]})
+    execute("update users set password_hash = ? where id = ?", (password_hash, user_id))
+    return jsonify({"ok": True})
 
 
 @app.post("/api/users")
@@ -430,10 +473,17 @@ def create_user():
     if error:
         return error
     data = parse_json()
+    password_hash, password_error = password_hash_from_data(data, required=True)
+    if password_error:
+        return password_error
     user_id = data.get("id") or make_id("USR")
     execute(
-        "insert into users values (?, ?, ?, ?, ?, 'active', ?)",
-        (user_id, data.get("partner_id") or "partner-yango", data["name"], data["email"], data["role"], now_iso()),
+        """
+        insert into users
+        (id, partner_id, name, email, role, status, created_at, password_hash)
+        values (?, ?, ?, ?, ?, 'active', ?, ?)
+        """,
+        (user_id, data.get("partner_id") or "partner-yango", data["name"], data["email"], data["role"], now_iso(), password_hash),
     )
     return jsonify({"user": row_to_dict(query("select * from users where id = ?", (user_id,), one=True))}), 201
 
@@ -444,10 +494,15 @@ def update_user(user_id):
     if error:
         return error
     data = parse_json()
+    password_hash, password_error = password_hash_from_data(data)
+    if password_error:
+        return password_error
     execute(
         "update users set name = ?, email = ?, role = ?, status = ?, partner_id = ? where id = ?",
         (data["name"], data["email"], data["role"], data.get("status", "active"), data.get("partner_id") or "partner-yango", user_id),
     )
+    if password_hash:
+        execute("update users set password_hash = ? where id = ?", (password_hash, user_id))
     return jsonify({"user": row_to_dict(query("select * from users where id = ?", (user_id,), one=True))})
 
 

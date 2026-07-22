@@ -1,5 +1,6 @@
 const state = {
   role: localStorage.getItem("partnerportal_role") || "magna_admin",
+  userId: localStorage.getItem("partnerportal_user_id") || "",
   lang: localStorage.getItem("partnerportal_lang") || "es",
   view: "dashboard",
   data: null,
@@ -19,9 +20,10 @@ const labels = {
     emailAddress: "Email",
     password: "Clave",
     signIn: "Entrar",
-    demoCredentials: "Credenciales demo",
+    userPassword: "Clave de usuario",
+    optionalPassword: "Nueva clave (opcional)",
     secureAccess: "Acceso seguro",
-    loginPanelBody: "Usa la vista por rol para validar la demo. La autenticación productiva queda pendiente.",
+    loginPanelBody: "Ingresa con tu usuario autorizado para acceder al portal operativo.",
     viewEyebrow: "Centro de comando de tesorería",
     dashboard: "Dashboard",
     treasury: "Tesorería",
@@ -154,9 +156,10 @@ const labels = {
     emailAddress: "Email",
     password: "Password",
     signIn: "Sign in",
-    demoCredentials: "Demo credentials",
+    userPassword: "User password",
+    optionalPassword: "New password (optional)",
     secureAccess: "Secure access",
-    loginPanelBody: "Use role view for demo validation. Production auth is pending.",
+    loginPanelBody: "Sign in with your authorized user to access the operating portal.",
     viewEyebrow: "Treasury command center",
     dashboard: "Dashboard",
     treasury: "Treasury",
@@ -348,7 +351,7 @@ function categoryName(id) {
 }
 
 function headers(extra = {}) {
-  return { "X-Role": state.role, ...extra };
+  return { "X-Role": state.role, "X-User-Id": state.userId, ...extra };
 }
 
 async function api(path, options = {}) {
@@ -752,7 +755,6 @@ function openLoginModal() {
     <form data-login-form class="form-grid">
       <label class="full">${t("emailAddress")}<input name="email" type="email" autocomplete="username" required /></label>
       <label class="full">${t("password")}<input name="password" type="password" autocomplete="current-password" required /></label>
-      <div class="full muted">${t("demoCredentials")}: ops@magnaequity.com, approver@yango.com, treasury@yango.com, finance@yango.com</div>
       <div class="full"><button class="primary" type="submit">${t("signIn")}</button></div>
     </form>
   `);
@@ -844,6 +846,7 @@ function openUserModal(user = {}) {
         ${["magna_admin", "super_approver", "treasury", "finance"].map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}
       </select></label>
       <label>${t("status")}<select name="status"><option value="active" ${user.status !== "inactive" ? "selected" : ""}>active</option><option value="inactive" ${user.status === "inactive" ? "selected" : ""}>inactive</option></select></label>
+      <label class="full">${user.id ? t("optionalPassword") : t("userPassword")}<input name="password" type="password" autocomplete="new-password" ${user.id ? "" : "required"} /></label>
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
     </form>
   `);
@@ -1019,7 +1022,9 @@ document.addEventListener("submit", async (event) => {
       event.preventDefault();
       const result = await api("/api/login", { method: "POST", body: JSON.stringify(objectFromForm(form)) });
       state.role = result.role;
+      state.userId = result.user.id;
       localStorage.setItem("partnerportal_role", state.role);
+      localStorage.setItem("partnerportal_user_id", state.userId);
       closeModal();
       qs("#landing").classList.add("hidden");
       qs("#appShell").classList.remove("hidden");

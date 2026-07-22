@@ -20,14 +20,9 @@ python app.py
 
 Abrir `http://localhost:5001`.
 
-## Roles demo
+## Usuarios
 
-El selector lateral cambia el actor activo:
-
-- `magna_admin`: administra cuentas, crea compras USD, carga tasas y ejecuta operaciones.
-- `super_approver`: aprueba o rechaza operaciones.
-- `treasury`: aprueba tasas.
-- `finance`: solicita pagos y aprueba dispersión.
+User Management crea usuarios reales con password hasheada. Las claves se guardan en base de datos como hash, no en variables de entorno.
 
 ## Despliegue Railway
 
