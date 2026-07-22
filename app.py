@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import os
+import shutil
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -725,7 +726,7 @@ def normalize_treasury_amounts(data):
     return op_type, money(usd_signed), money(ves_signed)
 
 
-def parse_payment_allocations(data, target_ves_amount=None, required=False):
+def parse_payment_allocations(data, target_ves_amount=None, required=False, require_proofs=False, files=None):
     raw_allocations = data.get("payment_allocations") or "[]"
     if isinstance(raw_allocations, str):
         try:
@@ -749,6 +750,9 @@ def parse_payment_allocations(data, target_ves_amount=None, required=False):
         amount = Decimal(str(item.get("amount_ves") or item.get("amount") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         if amount <= 0:
             return None, Decimal("0"), "Cada beneficiario debe tener un monto mayor a cero."
+        proof_field = (item.get("proof_field") or f"payment_proof_{beneficiary_id}").strip()
+        if require_proofs and (not files or proof_field not in files or not files[proof_field].filename):
+            return None, Decimal("0"), "Cada beneficiario debe tener su factura, nota de entrega o soporte."
         seen.add(beneficiary_id)
         total += amount
         allocations.append(
@@ -757,6 +761,11 @@ def parse_payment_allocations(data, target_ves_amount=None, required=False):
                 "beneficiary_name": beneficiary["name"],
                 "beneficiary_category": beneficiary["category"],
                 "amount_ves": money(amount),
+                "proof_field": proof_field,
+                "proof_attachment_id": item.get("proof_attachment_id"),
+                "proof_filename": item.get("proof_filename"),
+                "proof_stored_path": item.get("proof_stored_path"),
+                "proof_content_type": item.get("proof_content_type"),
             }
         )
     if required and not allocations:
@@ -776,7 +785,13 @@ def create_treasury_request():
         data = request.get_json(force=True)
     op_type, usd_amount, ves_amount = normalize_treasury_amounts(data)
     allocation_target = ves_amount if op_type == "sell_usd" else None
-    allocations, _allocation_total, allocation_error = parse_payment_allocations(data, allocation_target, required=op_type == "sell_usd")
+    allocations, _allocation_total, allocation_error = parse_payment_allocations(
+        data,
+        allocation_target,
+        required=op_type == "sell_usd",
+        require_proofs=op_type == "sell_usd",
+        files=request.files,
+    )
     if allocation_error:
         return jsonify({"error": allocation_error}), 400
     operation_id = make_id("BUY" if op_type == "buy_usd" else "SELL")
@@ -818,7 +833,18 @@ def create_treasury_request():
         ),
     )
     log_event(operation_id, "created", "Solicitud de tesoreria creada.", user["id"], data.get("comment"))
-    save_request_files(operation_id, user["id"])
+    saved_attachments = save_request_files(operation_id, user["id"])
+    attachments_by_field = {attachment["field"]: attachment for attachment in saved_attachments}
+    for allocation in allocations or []:
+        attachment = attachments_by_field.get(allocation.get("proof_field"))
+        if attachment:
+            allocation["proof_attachment_id"] = attachment["id"]
+            allocation["proof_filename"] = attachment["filename"]
+            allocation["proof_stored_path"] = attachment["stored_path"]
+            allocation["proof_content_type"] = attachment["content_type"]
+    if allocations:
+        metadata["payment_allocations"] = allocations
+        execute("update operations set metadata = ? where id = ?", (json.dumps(metadata), operation_id))
     return jsonify({"operation": operation_payload(operation_id)}), 201
 
 
@@ -900,11 +926,15 @@ def decide_operation(operation_id):
 
 
 def save_request_files(operation_id, user_id):
+    saved = []
     for key, file in request.files.items():
         if not file or not file.filename:
             continue
         label = request.form.get(f"{key}_label") or key.replace("_", " ").title()
-        store_attachment(operation_id, label, file, user_id)
+        attachment = store_attachment(operation_id, label, file, user_id)
+        attachment["field"] = key
+        saved.append(attachment)
+    return saved
 
 
 def store_attachment(operation_id, label, file, user_id):
@@ -925,6 +955,14 @@ def store_attachment(operation_id, label, file, user_id):
         (attachment_id, operation_id, label, original, user_id, now_iso(), stored_path, content_type),
     )
     log_event(operation_id, "attachment_added", f"Soporte cargado: {label}.", user_id, original)
+    return {
+        "id": attachment_id,
+        "operation_id": operation_id,
+        "label": label,
+        "filename": original,
+        "stored_path": stored_path,
+        "content_type": content_type,
+    }
 
 
 @app.post("/api/operations/<operation_id>/attachments")
@@ -945,6 +983,33 @@ def update_balance(account_id, delta, reason, operation_id):
     new_balance = money(account["balance"] + delta)
     execute("update accounts set balance = ?, updated_at = ? where id = ?", (new_balance, now_iso(), account_id))
     log_event(operation_id, "balance_updated", f"{reason}: {delta:+,.2f} {account['currency']}", metadata={"account_id": account_id, "new_balance": new_balance})
+
+
+def copy_attachment_to_operation(source_attachment_id, target_operation_id, label, user_id):
+    source = query("select * from attachments where id = ?", (source_attachment_id,), one=True)
+    if not source or not source["stored_path"]:
+        return None
+    source_path = UPLOAD_DIR / source["stored_path"]
+    if not source_path.exists():
+        return None
+    folder = UPLOAD_DIR / target_operation_id
+    folder.mkdir(parents=True, exist_ok=True)
+    original = source["filename"] or "attachment"
+    stored_name = f"{uuid.uuid4().hex}_{secure_filename(original) or 'attachment'}"
+    stored_path = f"{target_operation_id}/{stored_name}"
+    shutil.copy2(source_path, folder / stored_name)
+    attachment_id = make_id("ATT")
+    content_type = source["content_type"] or mimetypes.guess_type(original)[0] or "application/octet-stream"
+    execute(
+        """
+        insert into attachments
+        (id, operation_id, label, filename, uploaded_by, created_at, stored_path, content_type)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (attachment_id, target_operation_id, label, original, user_id, now_iso(), stored_path, content_type),
+    )
+    log_event(target_operation_id, "attachment_added", f"Soporte cargado: {label}.", user_id, original)
+    return attachment_id
 
 
 def create_payment_requests_from_sale(sale_op, allocations, source_account_id, user_id):
@@ -988,6 +1053,8 @@ def create_payment_requests_from_sale(sale_op, allocations, source_account_id, u
             ),
         )
         log_event(payment_id, "created", f"Solicitud de pago autogenerada desde {sale_op['id']}.", user_id)
+        if allocation.get("proof_attachment_id"):
+            copy_attachment_to_operation(allocation["proof_attachment_id"], payment_id, "Factura / nota de entrega", user_id)
         created_ids.append(payment_id)
     log_event(sale_op["id"], "payment_requests_created", f"Se generaron {len(created_ids)} solicitudes de pago.", user_id, metadata={"payment_ids": created_ids})
     return created_ids
@@ -1002,16 +1069,23 @@ def execute_operation(operation_id):
     op = operation_payload(operation_id)
     if not op:
         return jsonify({"error": "Operacion no encontrada."}), 404
-    if op["status"] != "approved":
-        return jsonify({"error": "Solo se pueden cerrar operaciones aprobadas."}), 400
-    required_files = ("usd_exit_support", "ves_entry_support")
+    if op["type"] == "payment":
+        if op["status"] not in ("funded", "in_process", "approved"):
+            return jsonify({"error": "Solo se pueden completar pagos fondeados o aprobados."}), 400
+        required_files = ("payment_execution_support",)
+    else:
+        if op["status"] != "approved":
+            return jsonify({"error": "Solo se pueden completar operaciones aprobadas."}), 400
+        required_files = ("usd_exit_support", "ves_entry_support")
     missing_files = [key for key in required_files if key not in request.files or not request.files[key].filename]
     if missing_files:
-        return jsonify({"error": "Debes cargar la prueba USD y la prueba VES para cerrar la operacion."}), 400
+        return jsonify({"error": "Debes cargar los soportes requeridos para completar la operacion."}), 400
     source_account = data.get("source_account_id") or op.get("source_account_id")
     destination_account = data.get("destination_account_id") or op.get("destination_account_id")
     usd_amount = money(data.get("usd_amount", op.get("usd_amount") or 0))
     ves_amount = money(data.get("ves_amount", op.get("ves_amount") or 0))
+    if op["type"] == "payment":
+        ves_amount = -abs(ves_amount or op.get("requested_amount") or op.get("final_amount") or 0)
     allocations = []
     if op["type"] == "sell_usd":
         allocations, _allocation_total, allocation_error = parse_payment_allocations(
@@ -1040,7 +1114,7 @@ def execute_operation(operation_id):
         create_payment_requests_from_sale({**op, "destination_account_id": destination_account}, allocations, destination_account, user["id"])
     elif op["type"] == "payment":
         update_balance(source_account, -abs(ves_amount or op.get("requested_amount") or 0), "Dispersion de pago", operation_id)
-    log_event(operation_id, "completed", "Master cerro la operacion y cargo las pruebas USD/VES.", user["id"], data.get("comment"))
+    log_event(operation_id, "completed", "Master completo la operacion y cargo los soportes requeridos.", user["id"], data.get("comment"))
     return jsonify({"operation": operation_payload(operation_id)})
 
 
@@ -1049,7 +1123,7 @@ def complete_operation(operation_id):
     user, error = require_roles(ROLE_MASTER)
     if error:
         return error
-    return jsonify({"error": "Cierra la operacion cargando las pruebas USD/VES desde el flujo de cierre."}), 400
+    return jsonify({"error": "Completa la operacion cargando los soportes requeridos desde el flujo de completar."}), 400
 
 
 @app.post("/api/settings")

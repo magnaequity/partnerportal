@@ -76,6 +76,7 @@ const labels = {
     noOperations: "Sin operaciones.",
     noAccounts: "Sin cuentas.",
     noBeneficiaries: "Sin beneficiarios.",
+    noBeneficiariesSelected: "Sin beneficiarios agregados.",
     noSupport: "Sin soportes.",
     noActivity: "Sin actividad.",
     netUsd: "USD neto",
@@ -114,7 +115,11 @@ const labels = {
     usage: "Uso",
     beneficiary: "Beneficiario",
     paymentDistribution: "Distribución de pagos",
-    selectBeneficiaries: "Selecciona beneficiarios y monto VES por cada uno.",
+    selectBeneficiaries: "Selecciona un beneficiario y agrégalo a la distribución.",
+    addBeneficiary: "Agregar beneficiario",
+    remove: "Quitar",
+    invoiceProof: "Factura / nota de entrega",
+    paymentExecutionSupport: "Soporte de ejecución del pago",
     allocationTotal: "Total distribuido",
     allocationTarget: "Total venta VES",
     allocationMatches: "Cuadre correcto",
@@ -228,6 +233,7 @@ const labels = {
     noOperations: "No operations.",
     noAccounts: "No accounts.",
     noBeneficiaries: "No beneficiaries.",
+    noBeneficiariesSelected: "No beneficiaries added.",
     noSupport: "No attachments.",
     noActivity: "No activity.",
     netUsd: "Net USD",
@@ -266,7 +272,11 @@ const labels = {
     usage: "Use",
     beneficiary: "Beneficiary",
     paymentDistribution: "Payment distribution",
-    selectBeneficiaries: "Select beneficiaries and VES amount for each one.",
+    selectBeneficiaries: "Select a beneficiary and add it to the distribution.",
+    addBeneficiary: "Add beneficiary",
+    remove: "Remove",
+    invoiceProof: "Invoice / delivery note",
+    paymentExecutionSupport: "Payment execution support",
     allocationTotal: "Allocated total",
     allocationTarget: "Sale total VES",
     allocationMatches: "Matched",
@@ -856,7 +866,6 @@ function openTreasuryModal() {
         ${paymentAllocationMarkup(categories[0]?.id)}
       </div>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
-      <label class="full">${t("deliveryNoteInvoice")}<input name="support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" /></label>
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
     </form>
   `);
@@ -879,23 +888,61 @@ function paymentAllocationMarkup(categoryId) {
       </div>
       <span class="allocation-proof" data-allocation-proof>—</span>
     </div>
+    <div class="allocation-picker">
+      <select data-allocation-select>
+        ${beneficiaries.map((ben) => `<option value="${ben.id}">${ben.name} · ${ben.bank || "—"}</option>`).join("")}
+      </select>
+      <button class="subtle" data-add-allocation type="button">${t("addBeneficiary")}</button>
+    </div>
     <div class="allocation-list">
-      ${beneficiaries.map((ben) => `
-        <label class="allocation-row">
-          <input type="checkbox" value="${ben.id}" data-allocation-check />
-          <span>
-            <strong>${ben.name}</strong>
-            <small>${ben.bank || "—"} · ${ben.account_number || "—"}</small>
-          </span>
-          <input type="number" step="0.01" min="0" placeholder="VES" data-allocation-amount="${ben.id}" disabled />
-        </label>
-      `).join("") || `<p class="muted">${t("noBeneficiaries")}</p>`}
+      <p class="muted" data-allocation-empty>${t("noBeneficiariesSelected")}</p>
     </div>
     <div class="allocation-summary">
       <span>${t("allocationTotal")}: <strong data-allocation-total>0.00 VES</strong></span>
       <span>${t("allocationTarget")}: <strong data-allocation-target>0.00 VES</strong></span>
     </div>
   `;
+}
+
+function allocationBeneficiaryById(id) {
+  return state.data.beneficiaries.find((ben) => ben.id === id);
+}
+
+function refreshAllocationPicker(form) {
+  const select = form.querySelector("[data-allocation-select]");
+  if (!select) return;
+  const selectedIds = new Set([...form.querySelectorAll("[data-allocation-row]")].map((row) => row.dataset.allocationRow));
+  const categoryId = form.elements.usage_category_id?.value;
+  const options = beneficiariesForCategory(categoryId)
+    .filter((ben) => !selectedIds.has(ben.id))
+    .map((ben) => `<option value="${ben.id}">${ben.name} · ${ben.bank || "—"}</option>`)
+    .join("");
+  select.innerHTML = options;
+  select.disabled = !options;
+  const addButton = form.querySelector("[data-add-allocation]");
+  if (addButton) addButton.disabled = !options;
+}
+
+function addPaymentAllocationRow(form, beneficiaryId) {
+  const beneficiary = allocationBeneficiaryById(beneficiaryId);
+  const list = form.querySelector(".allocation-list");
+  if (!beneficiary || !list || form.querySelector(`[data-allocation-row="${beneficiaryId}"]`)) return;
+  form.querySelector("[data-allocation-empty]")?.remove();
+  const fileField = `payment_proof_${beneficiaryId}`;
+  list.insertAdjacentHTML("beforeend", `
+    <div class="allocation-row" data-allocation-row="${beneficiaryId}">
+      <div class="allocation-beneficiary">
+        <strong>${beneficiary.name}</strong>
+        <small>${beneficiary.bank || "—"} · ${beneficiary.account_number || "—"}</small>
+      </div>
+      <input type="number" step="0.01" min="0" placeholder="VES" data-allocation-amount="${beneficiaryId}" required />
+      <label class="allocation-file">${t("invoiceProof")}<input name="${fileField}" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
+      <input name="${fileField}_label" type="hidden" value="${t("invoiceProof")} · ${beneficiary.name}" />
+      <button class="danger" data-remove-allocation="${beneficiaryId}" type="button">${t("remove")}</button>
+    </div>
+  `);
+  refreshAllocationPicker(form);
+  updatePaymentAllocationSummary(form);
 }
 
 function targetVesForTreasuryForm(form) {
@@ -908,11 +955,11 @@ function targetVesForTreasuryForm(form) {
 }
 
 function selectedPaymentAllocations(form) {
-  return [...form.querySelectorAll("[data-allocation-check]")]
-    .filter((checkbox) => checkbox.checked)
-    .map((checkbox) => {
-      const amountInput = form.querySelector(`[data-allocation-amount="${checkbox.value}"]`);
-      return { beneficiary_id: checkbox.value, amount_ves: Number(amountInput?.value || 0) };
+  return [...form.querySelectorAll("[data-allocation-row]")]
+    .map((row) => {
+      const beneficiaryId = row.dataset.allocationRow;
+      const amountInput = form.querySelector(`[data-allocation-amount="${beneficiaryId}"]`);
+      return { beneficiary_id: beneficiaryId, amount_ves: Number(amountInput?.value || 0), proof_field: `payment_proof_${beneficiaryId}` };
     });
 }
 
@@ -921,11 +968,7 @@ function updatePaymentAllocationSummary(form) {
   const panel = form.querySelector("[data-allocation-panel]");
   const isSell = form.elements.operation_side?.value === "sell";
   if (panel) panel.hidden = !isSell;
-  [...form.querySelectorAll("[data-allocation-check]")].forEach((checkbox) => {
-    const amountInput = form.querySelector(`[data-allocation-amount="${checkbox.value}"]`);
-    if (amountInput) amountInput.disabled = !checkbox.checked;
-    if (!checkbox.checked && amountInput) amountInput.value = "";
-  });
+  refreshAllocationPicker(form);
   const target = isSell ? targetVesForTreasuryForm(form) : 0;
   const total = selectedPaymentAllocations(form).reduce((sum, item) => sum + item.amount_ves, 0);
   const matches = isSell && target > 0 && Math.round(total * 100) === Math.round(target * 100);
@@ -953,7 +996,10 @@ function operationAllocationDetail(op) {
       <div class="allocation-detail">
         ${allocations.map((item) => `
           <div class="allocation-detail-row">
-            <span>${item.beneficiary_name || beneficiaryName(item.beneficiary_id)}</span>
+            <span>
+              ${item.beneficiary_name || beneficiaryName(item.beneficiary_id)}
+              ${item.proof_stored_path ? `<button class="subtle inline-proof" data-preview-file="${item.proof_stored_path}" data-preview-name="${item.proof_filename || t("invoiceProof")}" data-preview-type="${item.proof_content_type || ""}" type="button">${item.proof_filename || t("invoiceProof")}</button>` : ""}
+            </span>
             <strong>${money(item.amount_ves, "VES")}</strong>
           </div>
         `).join("")}
@@ -1031,6 +1077,7 @@ function openOperationDetail(id) {
   if (!op) return;
   const canMaster = state.role === "magna_admin";
   const canClientApprove = state.role !== "magna_admin" && op.status === "rate_pending_approval";
+  const canMasterComplete = canMaster && (op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status)));
   openModal(op.id, `
     <div class="detail-list">
       <div class="detail-item"><span>${t("category")}</span><strong>${typeLabel(op.type, op.metadata || {})}</strong></div>
@@ -1057,7 +1104,7 @@ function openOperationDetail(id) {
     ${canMaster && op.status === "pending_master" ? `<button class="subtle" data-status-op="${op.id}" data-status="in_negotiation" type="button">${t("inNegotiation")}</button>` : ""}
     ${canMaster && ["in_negotiation", "pending_master"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${t("loadRate")}</button>` : ""}
     ${canClientApprove ? `<button class="danger" data-decision-op="${op.id}" data-decision="reject" type="button">${t("reject")}</button><button class="primary" data-decision-op="${op.id}" data-decision="approve" type="button">${t("approve")}</button>` : ""}
-    ${canMaster && op.status === "approved" ? `<button class="primary" data-execute-op="${op.id}" type="button">${t("closeOperation")}</button>` : ""}
+    ${canMasterComplete ? `<button class="primary" data-execute-op="${op.id}" type="button">${t("closeOperation")}</button>` : ""}
   `);
 }
 
@@ -1095,6 +1142,18 @@ function openRateModal(id) {
 
 function openExecuteModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
+  if (op.type === "payment") {
+    openModal(t("executeOperation"), `
+      <form data-execute-form="${id}" class="form-grid" enctype="multipart/form-data">
+        <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" value="${Math.abs(Number(op.ves_amount || op.requested_amount || 0))}" /></label>
+        <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions("VES", op.source_account_id)}</select></label>
+        <label class="full">${t("paymentExecutionSupport")}<input name="payment_execution_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
+        <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
+        <div class="full"><button class="primary" type="submit">${t("closeOperation")}</button></div>
+      </form>
+    `);
+    return;
+  }
   openModal(t("executeOperation"), `
     <form data-execute-form="${id}" class="form-grid" enctype="multipart/form-data">
       <label>${t("amountUsd")}<input name="usd_amount" type="number" step="0.01" value="${op.usd_amount || 0}" /></label>
@@ -1190,6 +1249,22 @@ document.addEventListener("click", async (event) => {
   if (decision) {
     openDecisionModal(decision.dataset.decisionOp, decision.dataset.decision);
   }
+  const addAllocation = event.target.closest("[data-add-allocation]");
+  if (addAllocation) {
+    const form = addAllocation.closest("[data-treasury-form]");
+    const select = form?.querySelector("[data-allocation-select]");
+    if (form && select?.value) addPaymentAllocationRow(form, select.value);
+  }
+  const removeAllocation = event.target.closest("[data-remove-allocation]");
+  if (removeAllocation) {
+    const form = removeAllocation.closest("[data-treasury-form]");
+    removeAllocation.closest("[data-allocation-row]")?.remove();
+    const list = form?.querySelector(".allocation-list");
+    if (list && !list.querySelector("[data-allocation-row]")) {
+      list.innerHTML = `<p class="muted" data-allocation-empty>${t("noBeneficiariesSelected")}</p>`;
+    }
+    updatePaymentAllocationSummary(form);
+  }
 });
 
 document.addEventListener("change", (event) => {
@@ -1207,9 +1282,8 @@ document.addEventListener("change", (event) => {
   }
   const treasurySide = event.target.closest("[data-treasury-side]");
   if (treasurySide) updatePaymentAllocationSummary(treasurySide.closest("[data-treasury-form]"));
-  const allocationCheck = event.target.closest("[data-allocation-check]");
-  if (allocationCheck) {
-    updatePaymentAllocationSummary(allocationCheck.closest("[data-treasury-form]"));
+  if (event.target.closest("[data-allocation-row] input[type='file']")) {
+    updatePaymentAllocationSummary(event.target.closest("[data-treasury-form]"));
   }
 });
 
@@ -1293,8 +1367,12 @@ document.addEventListener("submit", async (event) => {
     if (form.matches("[data-execute-form]")) {
       event.preventDefault();
       const data = new FormData(form);
-      data.append("usd_exit_support_label", t("usdExitSupport"));
-      data.append("ves_entry_support_label", t("vesEntrySupport"));
+      if (data.has("payment_execution_support")) {
+        data.append("payment_execution_support_label", t("paymentExecutionSupport"));
+      } else {
+        data.append("usd_exit_support_label", t("usdExitSupport"));
+        data.append("ves_entry_support_label", t("vesEntrySupport"));
+      }
       await api(`/api/operations/${form.dataset.executeForm}/execute`, { method: "POST", body: data });
       closeModal();
       await load();
