@@ -54,6 +54,7 @@ const labels = {
     execute: "Ejecutar",
     approve: "Aprobar",
     reject: "Rechazar",
+    reopen: "Reabrir",
     rate: "Tasa",
     binance: "Tasa Binance",
     spread: "Spread",
@@ -133,6 +134,7 @@ const labels = {
     usdExitSupport: "Comprobante salida USD",
     vesEntrySupport: "Comprobante entrada VES",
     inNegotiation: "En negociación",
+    reopened: "Solicitud reabierta.",
     requiredComment: "Comentario obligatorio",
     decisionTitleApprove: "Aprobar operación",
     decisionTitleReject: "Rechazar operación",
@@ -197,6 +199,7 @@ const labels = {
     execute: "Execute",
     approve: "Approve",
     reject: "Reject",
+    reopen: "Reopen",
     rate: "Rate",
     binance: "Binance rate",
     spread: "Spread",
@@ -276,6 +279,7 @@ const labels = {
     usdExitSupport: "USD outbound receipt",
     vesEntrySupport: "VES inbound receipt",
     inNegotiation: "In negotiation",
+    reopened: "Request reopened.",
     requiredComment: "Required comment",
     decisionTitleApprove: "Approve operation",
     decisionTitleReject: "Reject operation",
@@ -528,7 +532,7 @@ function renderTreasury() {
 }
 
 function renderApprovals() {
-  const statuses = state.role === "magna_admin" ? ["pending_master", "in_negotiation", "approved"] : ["rate_pending_approval"];
+  const statuses = state.role === "magna_admin" ? ["pending_master", "in_negotiation", "approved", "rejected"] : ["rate_pending_approval"];
   const ops = state.data.operations.filter((op) => statuses.includes(op.status));
   qs("#viewBody").innerHTML = `
     <section class="panel">
@@ -938,6 +942,7 @@ function openOperationDetail(id) {
       <div class="timeline">${(op.events || []).map((event) => `<div class="timeline-item"><strong>${event.description}</strong><div class="muted">${new Date(event.created_at).toLocaleString()} ${event.comment ? `· ${event.comment}` : ""}</div></div>`).join("")}</div>
     </section>
   `, `
+    ${canMaster && op.status === "rejected" ? `<button class="subtle" data-status-op="${op.id}" data-status="pending_master" data-status-message="${t("reopened")}" type="button">${t("reopen")}</button>` : ""}
     ${canMaster && op.status === "pending_master" ? `<button class="subtle" data-status-op="${op.id}" data-status="in_negotiation" type="button">${t("inNegotiation")}</button>` : ""}
     ${canMaster && ["in_negotiation", "pending_master"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${t("loadRate")}</button>` : ""}
     ${canClientApprove ? `<button class="danger" data-decision-op="${op.id}" data-decision="reject" type="button">${t("reject")}</button><button class="primary" data-decision-op="${op.id}" data-decision="approve" type="button">${t("approve")}</button>` : ""}
@@ -1058,7 +1063,14 @@ document.addEventListener("click", async (event) => {
   if (deleteCategory && confirm(t("deleteCategoryConfirm"))) await api(`/api/categories/${deleteCategory.dataset.deleteCategory}`, { method: "DELETE" }), await load();
 
   const statusOp = event.target.closest("[data-status-op]");
-  if (statusOp) await api(`/api/operations/${statusOp.dataset.statusOp}/status`, { method: "POST", body: JSON.stringify({ status: statusOp.dataset.status }) }), closeModal(), await load();
+  if (statusOp) {
+    const operationId = statusOp.dataset.statusOp;
+    await api(`/api/operations/${operationId}/status`, { method: "POST", body: JSON.stringify({ status: statusOp.dataset.status }) });
+    closeModal();
+    await load();
+    openOperationDetail(operationId);
+    if (statusOp.dataset.statusMessage) toast(statusOp.dataset.statusMessage);
+  }
   const rateOp = event.target.closest("[data-rate-op]");
   if (rateOp) openRateModal(rateOp.dataset.rateOp);
   const execOp = event.target.closest("[data-execute-op]");
