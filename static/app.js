@@ -120,6 +120,7 @@ const labels = {
     remove: "Quitar",
     invoiceProof: "Factura / nota de entrega",
     paymentExecutionSupport: "Soporte de ejecución del pago",
+    approvedAmountLocked: "Monto aprobado bloqueado",
     allocationTotal: "Total distribuido",
     allocationTarget: "Total venta VES",
     allocationMatches: "Cuadre correcto",
@@ -277,6 +278,7 @@ const labels = {
     remove: "Remove",
     invoiceProof: "Invoice / delivery note",
     paymentExecutionSupport: "Payment execution support",
+    approvedAmountLocked: "Approved amount locked",
     allocationTotal: "Allocated total",
     allocationTarget: "Sale total VES",
     allocationMatches: "Matched",
@@ -1143,9 +1145,15 @@ function openRateModal(id) {
 function openExecuteModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
   if (op.type === "payment") {
+    const paymentVesAmount = Math.abs(Number(op.ves_amount || op.requested_amount || 0));
     openModal(t("executeOperation"), `
       <form data-execute-form="${id}" class="form-grid" enctype="multipart/form-data">
-        <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" value="${Math.abs(Number(op.ves_amount || op.requested_amount || 0))}" /></label>
+        <div class="readonly-amount">
+          <span>${t("amountVes")}</span>
+          <strong>${money(paymentVesAmount, "VES")}</strong>
+          <small>${t("approvedAmountLocked")}</small>
+        </div>
+        <input name="ves_amount" type="hidden" value="${paymentVesAmount}" />
         <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions("VES", op.source_account_id)}</select></label>
         <label class="full">${t("paymentExecutionSupport")}<input name="payment_execution_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
         <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
@@ -1154,10 +1162,22 @@ function openExecuteModal(id) {
     `);
     return;
   }
+  const usdAmount = Number(op.usd_amount || 0);
+  const vesAmount = Number(op.ves_amount || 0);
   openModal(t("executeOperation"), `
     <form data-execute-form="${id}" class="form-grid" enctype="multipart/form-data">
-      <label>${t("amountUsd")}<input name="usd_amount" type="number" step="0.01" value="${op.usd_amount || 0}" /></label>
-      <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" value="${op.ves_amount || 0}" /></label>
+      <div class="readonly-amount">
+        <span>${t("amountUsd")}</span>
+        <strong>${money(usdAmount, "USD")}</strong>
+        <small>${t("approvedAmountLocked")}</small>
+      </div>
+      <div class="readonly-amount">
+        <span>${t("amountVes")}</span>
+        <strong>${money(vesAmount, "VES")}</strong>
+        <small>${t("approvedAmountLocked")}</small>
+      </div>
+      <input name="usd_amount" type="hidden" value="${usdAmount}" />
+      <input name="ves_amount" type="hidden" value="${vesAmount}" />
       <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions("", op.source_account_id)}</select></label>
       <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions("", op.destination_account_id)}</select></label>
       <label class="full">${t("usdExitSupport")}<input name="usd_exit_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>

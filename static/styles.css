@@ -515,6 +515,28 @@ tbody tr:hover {
   grid-column: 1 / -1;
 }
 
+.readonly-amount {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(248, 251, 252, 0.9);
+}
+
+.readonly-amount span,
+.readonly-amount small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.readonly-amount strong {
+  display: block;
+  margin: 6px 0 4px;
+  color: var(--ink);
+  font-size: 1.08rem;
+}
+
 .decision-actions {
   display: flex;
   justify-content: flex-end;

@@ -1082,10 +1082,13 @@ def execute_operation(operation_id):
         return jsonify({"error": "Debes cargar los soportes requeridos para completar la operacion."}), 400
     source_account = data.get("source_account_id") or op.get("source_account_id")
     destination_account = data.get("destination_account_id") or op.get("destination_account_id")
-    usd_amount = money(data.get("usd_amount", op.get("usd_amount") or 0))
-    ves_amount = money(data.get("ves_amount", op.get("ves_amount") or 0))
     if op["type"] == "payment":
+        usd_amount = money(op.get("usd_amount") or 0)
+        ves_amount = money(op.get("ves_amount") or op.get("requested_amount") or op.get("final_amount") or 0)
         ves_amount = -abs(ves_amount or op.get("requested_amount") or op.get("final_amount") or 0)
+    else:
+        usd_amount = money(op.get("usd_amount") or 0)
+        ves_amount = money(op.get("ves_amount") or 0)
     allocations = []
     if op["type"] == "sell_usd":
         allocations, _allocation_total, allocation_error = parse_payment_allocations(
