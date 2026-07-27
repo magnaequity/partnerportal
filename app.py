@@ -7,6 +7,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from flask import Flask, g, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -36,6 +39,7 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 ROLE_MASTER = "magna_admin"
 CLIENT_ROLES = ("super_approver", "treasury", "finance")
+BINANCE_RATE_URL = "https://consulta-rates.insularcambios.com/v1/tasas/binance"
 INITIAL_PASSWORD_ENVS = {
     "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
     "usr-yango-super": "YANGO_APPROVER_PASSWORD",
@@ -358,14 +362,15 @@ def seed_db():
     conn.executemany("insert or ignore into categories values (?, ?, ?, ?, ?)", categories)
     settings = [
         ("rate_expiration_minutes", "7", ts),
+        ("binance_range_percent", "1", ts),
+        ("binance_fee_percent", "0", ts),
         ("buy_statuses", "draft,pending_approval,approved,rejected,expired,executed,completed", ts),
         ("sell_statuses", "pending_master,in_negotiation,rate_pending_approval,approved,rejected,expired,executed,completed", ts),
         ("payment_statuses", "draft,pending_funding,funded,in_process,paid,completed,rejected,cancelled", ts),
     ]
     conn.executemany(
         """
-        insert into settings values (?, ?, ?)
-        on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at
+        insert or ignore into settings values (?, ?, ?)
         """,
         settings,
     )
@@ -800,6 +805,58 @@ def recalculate_amounts_for_rate(op, rate):
     return usd_amount, ves_amount
 
 
+def decimal_setting(key, default="0"):
+    return Decimal(str(get_setting(key, default) or default))
+
+
+def binance_validation(rate, binance_rate=None):
+    reference = Decimal(str(binance_rate or 0))
+    range_pct = decimal_setting("binance_range_percent", "1")
+    lower = Decimal("0")
+    upper = Decimal("0")
+    within_range = None
+    if reference > 0:
+        lower = (reference * (Decimal("1") - range_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        upper = (reference * (Decimal("1") + range_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        within_range = lower <= rate <= upper
+    return {
+        "range_percent": money(range_pct),
+        "lower": money(lower),
+        "upper": money(upper),
+        "within_range": within_range,
+    }
+
+
+@app.get("/api/rates/binance")
+def get_binance_rate():
+    user, error = require_roles(ROLE_MASTER)
+    if error:
+        return error
+    pct = request.args.get("pct")
+    if pct is None:
+        pct = get_setting("binance_fee_percent", "0")
+    try:
+        pct_decimal = Decimal(str(pct or 0))
+        query_string = urlencode({"pct": str(pct_decimal)})
+        with urlopen(f"{BINANCE_RATE_URL}?{query_string}", timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        return jsonify({"error": f"No se pudo consultar la tasa Binance: {exc}"}), 502
+    if not payload.get("ok"):
+        return jsonify({"error": "La fuente Binance no respondio OK."}), 502
+    rate = Decimal(str(payload.get("tasa") or 0))
+    validation = binance_validation(rate, rate)
+    return jsonify(
+        {
+            "source": BINANCE_RATE_URL,
+            "rate": money(rate),
+            "consulted_at": payload.get("consultadoEn"),
+            "raw": payload,
+            "validation": validation,
+        }
+    )
+
+
 @app.post("/api/treasury-requests")
 def create_treasury_request():
     user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
@@ -904,13 +961,25 @@ def set_operation_rate(operation_id):
     minutes = int(get_setting("rate_expiration_minutes", "7"))
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
     usd_amount, ves_amount = recalculate_amounts_for_rate(op, rate)
+    validation = binance_validation(rate, binance_rate)
+    metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
+    metadata["binance_snapshot"] = {
+        "reference_rate": money(binance_rate),
+        "operation_rate": money(rate),
+        "range_percent": validation["range_percent"],
+        "lower": validation["lower"],
+        "upper": validation["upper"],
+        "within_range": validation["within_range"],
+        "consulted_at": data.get("binance_consulted_at"),
+        "source": data.get("binance_source") or BINANCE_RATE_URL,
+    }
     execute(
         """
         update operations
         set status = 'rate_pending_approval', rate = ?, binance_rate = ?, spread = ?,
             source_account_id = coalesce(?, source_account_id),
             destination_account_id = coalesce(?, destination_account_id),
-            usd_amount = ?, ves_amount = ?, expires_at = ?, updated_at = ?
+            usd_amount = ?, ves_amount = ?, metadata = ?, expires_at = ?, updated_at = ?
         where id = ?
         """,
         (
@@ -921,12 +990,13 @@ def set_operation_rate(operation_id):
             data.get("destination_account_id"),
             money(usd_amount),
             money(ves_amount),
+            json.dumps(metadata),
             expires_at,
             now_iso(),
             operation_id,
         ),
     )
-    log_event(operation_id, "rate_loaded", "Master cargo tasa y referencia Binance.", user["id"], data.get("comment"), {"spread": money(spread)})
+    log_event(operation_id, "rate_loaded", "Master cargo tasa y referencia Binance.", user["id"], data.get("comment"), {"spread": money(spread), "binance_validation": validation})
     return jsonify({"operation": operation_payload(operation_id)})
 
 

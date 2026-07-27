@@ -493,6 +493,26 @@ tbody tr:hover {
   background: rgba(214, 180, 106, 0.18);
 }
 
+.range-pill {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.range-pill.ok {
+  color: var(--green);
+  background: rgba(31, 138, 91, 0.12);
+}
+
+.range-pill.warning {
+  color: var(--red);
+  background: rgba(189, 59, 69, 0.1);
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -535,6 +555,20 @@ tbody tr:hover {
   margin: 6px 0 4px;
   color: var(--ink);
   font-size: 1.08rem;
+}
+
+.rate-tools {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.rate-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
 }
 
 .decision-actions {
@@ -796,7 +830,8 @@ tbody tr:hover {
   .toolbar,
   .detail-list,
   .allocation-picker,
-  .allocation-row {
+  .allocation-row,
+  .rate-tools {
     grid-template-columns: 1fr;
   }
 

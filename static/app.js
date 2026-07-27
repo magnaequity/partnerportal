@@ -58,6 +58,12 @@ const labels = {
     reopen: "Reabrir",
     rate: "Tasa",
     binance: "Tasa Binance",
+    fetchBinance: "Consultar Binance",
+    binanceFeePercent: "Deducción Binance %",
+    binanceRangePercent: "Rango permitido Binance %",
+    withinRange: "OK · Dentro del rango",
+    outsideRange: "Warning · Fuera de rango",
+    binanceRange: "Rango Binance",
     spread: "Spread",
     status: "Status",
     account: "Cuenta",
@@ -216,6 +222,12 @@ const labels = {
     reopen: "Reopen",
     rate: "Rate",
     binance: "Binance rate",
+    fetchBinance: "Fetch Binance",
+    binanceFeePercent: "Binance deduction %",
+    binanceRangePercent: "Allowed Binance range %",
+    withinRange: "OK · Within range",
+    outsideRange: "Warning · Out of range",
+    binanceRange: "Binance range",
     spread: "Spread",
     status: "Status",
     account: "Account",
@@ -369,6 +381,27 @@ function applyLanguage() {
 function money(value, currency = "") {
   const formatted = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
   return currency ? `${formatted} ${currency}` : formatted;
+}
+
+function binanceSnapshot(op) {
+  return op.metadata?.binance_snapshot || null;
+}
+
+function binanceRangeFor(rate, reference) {
+  const rangePct = Number(state.data?.settings?.binance_range_percent || 1);
+  const ref = Number(reference || 0);
+  const operationRate = Number(rate || 0);
+  if (!ref || !operationRate) return null;
+  const lower = ref * (1 - rangePct / 100);
+  const upper = ref * (1 + rangePct / 100);
+  return { lower, upper, withinRange: operationRate >= lower && operationRate <= upper, rangePct };
+}
+
+function binancePill(op) {
+  const snapshot = binanceSnapshot(op);
+  if (!snapshot || snapshot.within_range === null || snapshot.within_range === undefined) return "—";
+  const ok = snapshot.within_range === true;
+  return `<span class="range-pill ${ok ? "ok" : "warning"}">${ok ? t("withinRange") : t("outsideRange")}</span>`;
 }
 
 function statusClass(status = "") {
@@ -606,6 +639,7 @@ function operationTable(ops, actions = true) {
             <th>USD</th>
             <th>VES</th>
             <th>${t("rate")}</th>
+            <th>${t("binanceRange")}</th>
             <th>${t("status")}</th>
             <th>${t("account")}</th>
             <th>${t("date")}</th>
@@ -620,12 +654,13 @@ function operationTable(ops, actions = true) {
               <td class="${Number(op.usd_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.usd_amount, "USD")}</td>
               <td class="${Number(op.ves_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.ves_amount, "VES")}</td>
               <td>${op.rate ? money(op.rate) : "—"}</td>
+              <td>${binancePill(op)}</td>
               <td><span class="status ${statusClass(op.status)}">${op.status}</span></td>
               <td>${accountName(op.source_account_id || op.destination_account_id)}</td>
               <td>${new Date(op.created_at).toLocaleDateString()}</td>
               ${actions ? `<td><button class="subtle" data-open-operation="${op.id}" type="button">${t("view")}</button></td>` : ""}
             </tr>
-          `).join("") || `<tr><td colspan="${actions ? 9 : 8}" class="muted">${t("noOperations")}</td></tr>`}
+          `).join("") || `<tr><td colspan="${actions ? 10 : 9}" class="muted">${t("noOperations")}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -773,6 +808,8 @@ function renderSettings() {
       <div class="panel-header"><h2>${t("operationalSettings")}</h2></div>
       <form data-settings-form class="form-grid">
         <label>${t("rateExpirationMinutes")}<input name="rate_expiration_minutes" type="number" min="1" max="60" value="${state.data.settings.rate_expiration_minutes || 7}" /></label>
+        <label>${t("binanceRangePercent")}<input name="binance_range_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_range_percent || 1}" /></label>
+        <label>${t("binanceFeePercent")}<input name="binance_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_fee_percent || 0}" /></label>
         <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
       </form>
     </section>
@@ -1087,6 +1124,7 @@ function openOperationDetail(id) {
       <div class="detail-item"><span>${t("rate")}</span><strong>${op.rate ? money(op.rate) : "—"}</strong></div>
       <div class="detail-item"><span>Binance</span><strong>${op.binance_rate ? money(op.binance_rate) : "—"}</strong></div>
       <div class="detail-item"><span>Spread</span><strong>${op.spread ? `${money(op.spread)}%` : "—"}</strong></div>
+      <div class="detail-item"><span>${t("binanceRange")}</span><strong>${binancePill(op)}</strong></div>
       <div class="detail-item"><span>${t("beneficiary")}</span><strong>${beneficiaryName(op.beneficiary_id)}</strong></div>
       <div class="detail-item"><span>USD</span><strong class="${Number(op.usd_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.usd_amount, "USD")}</strong></div>
       <div class="detail-item"><span>VES</span><strong class="${Number(op.ves_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.ves_amount, "VES")}</strong></div>
@@ -1132,14 +1170,47 @@ function openRateModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
   openModal(t("loadRate"), `
     <form data-rate-form="${id}" class="form-grid">
-      <label>${t("achievedRate")}<input name="rate" type="number" step="0.0001" value="${op.rate || ""}" required /></label>
-      <label>${t("binance")}<input name="binance_rate" type="number" step="0.0001" value="${op.binance_rate || ""}" /></label>
+      <label>${t("achievedRate")}<input name="rate" type="number" step="0.0001" value="${op.rate || ""}" data-operation-rate required /></label>
+      <label>${t("binance")}<input name="binance_rate" type="number" step="0.0001" value="${op.binance_rate || ""}" data-binance-rate /></label>
+      <input name="binance_consulted_at" type="hidden" value="${binanceSnapshot(op)?.consulted_at || ""}" data-binance-consulted-at />
+      <input name="binance_source" type="hidden" value="${binanceSnapshot(op)?.source || ""}" data-binance-source />
+      <div class="full rate-tools">
+        <button class="subtle" data-fetch-binance type="button">${t("fetchBinance")}</button>
+        <div class="rate-range" data-rate-range></div>
+      </div>
       <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions(op.type === "sell_usd" ? "USD" : "VES", op.source_account_id)}</select></label>
       <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions(op.type === "sell_usd" ? "VES" : "USD", op.destination_account_id)}</select></label>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
       <div class="full"><button class="primary" type="submit">${t("sendClientApproval")}</button></div>
     </form>
   `);
+  updateRateRangePreview(qs("[data-rate-form]"));
+}
+
+function updateRateRangePreview(form) {
+  if (!form) return;
+  const operationRate = Number(form.elements.rate?.value || 0);
+  const binanceRate = Number(form.elements.binance_rate?.value || 0);
+  const range = binanceRangeFor(operationRate, binanceRate);
+  const node = form.querySelector("[data-rate-range]");
+  if (!node) return;
+  if (!range) {
+    node.innerHTML = `<span class="muted">${t("binanceRange")}: —</span>`;
+    return;
+  }
+  node.innerHTML = `
+    <span>${t("binanceRange")}: ${money(range.lower)} - ${money(range.upper)}</span>
+    <span class="range-pill ${range.withinRange ? "ok" : "warning"}">${range.withinRange ? t("withinRange") : t("outsideRange")}</span>
+  `;
+}
+
+async function fetchBinanceRate(form) {
+  const result = await api("/api/rates/binance");
+  form.elements.binance_rate.value = result.rate;
+  form.querySelector("[data-binance-consulted-at]").value = result.consulted_at || "";
+  form.querySelector("[data-binance-source]").value = result.source || "";
+  updateRateRangePreview(form);
+  toast(`${t("binance")}: ${money(result.rate)}`);
 }
 
 function openExecuteModal(id) {
@@ -1285,6 +1356,10 @@ document.addEventListener("click", async (event) => {
     }
     updatePaymentAllocationSummary(form);
   }
+  const fetchBinance = event.target.closest("[data-fetch-binance]");
+  if (fetchBinance) {
+    await fetchBinanceRate(fetchBinance.closest("[data-rate-form]"));
+  }
 });
 
 document.addEventListener("change", (event) => {
@@ -1315,6 +1390,9 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.closest("[data-allocation-amount]") || event.target.closest("[data-treasury-form] input[name='ves_amount']") || event.target.closest("[data-treasury-form] input[name='usd_amount']") || event.target.closest("[data-treasury-form] input[name='expected_rate']")) {
     updatePaymentAllocationSummary(event.target.closest("[data-treasury-form]"));
+  }
+  if (event.target.closest("[data-operation-rate]") || event.target.closest("[data-binance-rate]")) {
+    updateRateRangePreview(event.target.closest("[data-rate-form]"));
   }
 });
 
