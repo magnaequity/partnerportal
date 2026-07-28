@@ -354,13 +354,13 @@ textarea:focus {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .metric-card {
-  padding: 16px;
-  min-height: 112px;
+  padding: 11px 12px;
+  min-height: 82px;
   overflow: hidden;
   position: relative;
 }
@@ -368,23 +368,26 @@ textarea:focus {
 .metric-card::after {
   content: "";
   position: absolute;
-  right: -34px;
-  top: -34px;
-  width: 96px;
-  height: 96px;
+  right: -28px;
+  top: -30px;
+  width: 76px;
+  height: 76px;
   border-radius: 50%;
   background: linear-gradient(135deg, rgba(88, 198, 228, 0.2), rgba(214, 180, 106, 0.18));
 }
 
 .metric-card span {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .metric-card strong {
   display: block;
-  margin-top: 10px;
-  font-size: 1.42rem;
+  margin-top: 7px;
+  font-size: 1.06rem;
+  line-height: 1.12;
 }
 
 .toolbar {

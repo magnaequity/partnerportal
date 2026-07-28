@@ -65,7 +65,7 @@ const labels = {
     binanceRange: "Binance",
     rateRanges: "Rangos",
     binanceOkRate: "Binance OK %",
-    binanceOkTarget: "Meta 95%",
+    weightedBinanceSpread: "Spread ponderado Binance",
     spread: "Spread",
     status: "Status",
     account: "Cuenta",
@@ -231,7 +231,7 @@ const labels = {
     binanceRange: "Binance",
     rateRanges: "Ranges",
     binanceOkRate: "Binance OK %",
-    binanceOkTarget: "Target 95%",
+    weightedBinanceSpread: "Weighted Binance spread",
     spread: "Spread",
     status: "Status",
     account: "Account",
@@ -547,18 +547,28 @@ function operationStats(ops) {
   const binanceEligible = ops.filter((op) => ["buy_usd", "sell_usd"].includes(op.type) && Number(op.rate));
   const binanceOk = binanceEligible.filter((op) => binanceSnapshot(op)?.within_range === true).length;
   const binanceOkPercent = binanceEligible.length ? (binanceOk / binanceEligible.length) * 100 : null;
-  return { count: ops.length, usd, ves, weighted: weight ? weightedRate / weight : 0, binanceEligible: binanceEligible.length, binanceOk, binanceOkPercent };
+  const binanceRated = binanceEligible.filter((op) => Number(op.binance_rate || binanceSnapshot(op)?.reference_rate) && Math.abs(Number(op.usd_amount || 0)));
+  const spreadWeight = binanceRated.reduce((sum, op) => sum + Math.abs(Number(op.usd_amount || 0)), 0);
+  const weightedSpreadTotal = binanceRated.reduce((sum, op) => {
+    const reference = Number(op.binance_rate || binanceSnapshot(op)?.reference_rate || 0);
+    const spread = Number(op.spread || ((Number(op.rate) - reference) / reference) * 100);
+    return sum + spread * Math.abs(Number(op.usd_amount || 0));
+  }, 0);
+  const weightedBinanceSpread = spreadWeight ? weightedSpreadTotal / spreadWeight : null;
+  return { count: ops.length, usd, ves, weighted: weight ? weightedRate / weight : 0, binanceEligible: binanceEligible.length, binanceOk, binanceOkPercent, weightedBinanceSpread };
 }
 
 function metricCards(ops) {
   const stats = operationStats(ops);
+  const spreadClass = stats.weightedBinanceSpread === null ? "" : Math.abs(stats.weightedBinanceSpread) <= Number(state.data?.settings?.binance_range_percent || 1) ? "amount-positive" : "amount-negative";
   return `
     <div class="summary-grid">
       <article class="metric-card"><span>${t("operationCount")}</span><strong>${stats.count}</strong></article>
       <article class="metric-card"><span>${t("netUsd")}</span><strong class="${stats.usd < 0 ? "amount-negative" : "amount-positive"}">${money(stats.usd, "USD")}</strong></article>
       <article class="metric-card"><span>${t("netVes")}</span><strong class="${stats.ves < 0 ? "amount-negative" : "amount-positive"}">${money(stats.ves, "VES")}</strong></article>
       <article class="metric-card"><span>${t("weightedRate")}</span><strong>${stats.weighted ? money(stats.weighted) : "—"}</strong></article>
-      <article class="metric-card"><span>${t("binanceOkRate")} · ${t("binanceOkTarget")}</span><strong class="${stats.binanceOkPercent !== null && stats.binanceOkPercent < 95 ? "amount-negative" : "amount-positive"}">${stats.binanceOkPercent === null ? "—" : `${money(stats.binanceOkPercent)}%`}</strong><div class="muted">${stats.binanceOk}/${stats.binanceEligible} ${t("operations")}</div></article>
+      <article class="metric-card"><span>${t("binanceOkRate")}</span><strong class="${stats.binanceOkPercent !== null && stats.binanceOkPercent < 95 ? "amount-negative" : "amount-positive"}">${stats.binanceOkPercent === null ? "—" : `${money(stats.binanceOkPercent)}%`}</strong><div class="muted">${stats.binanceOk}/${stats.binanceEligible} ${t("operations")}</div></article>
+      <article class="metric-card"><span>${t("weightedBinanceSpread")}</span><strong class="${spreadClass}">${stats.weightedBinanceSpread === null ? "—" : `${money(stats.weightedBinanceSpread)}%`}</strong></article>
     </div>
   `;
 }
