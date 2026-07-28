@@ -59,9 +59,11 @@ const labels = {
     fetchBinance: "Consultar Binance",
     binanceFeePercent: "Deducción Binance %",
     binanceRangePercent: "Rango permitido Binance %",
-    withinRange: "OK · Dentro del rango",
-    outsideRange: "Warning · Fuera de rango",
-    binanceRange: "Rango Binance",
+    withinRange: "OK",
+    outsideRange: "NO OK",
+    binanceRange: "Binance",
+    binanceOkRate: "Binance OK %",
+    binanceOkTarget: "Meta 95%",
     spread: "Spread",
     status: "Status",
     account: "Cuenta",
@@ -221,9 +223,11 @@ const labels = {
     fetchBinance: "Fetch Binance",
     binanceFeePercent: "Binance deduction %",
     binanceRangePercent: "Allowed Binance range %",
-    withinRange: "OK · Within range",
-    outsideRange: "Warning · Out of range",
-    binanceRange: "Binance range",
+    withinRange: "OK",
+    outsideRange: "NO OK",
+    binanceRange: "Binance",
+    binanceOkRate: "Binance OK %",
+    binanceOkTarget: "Target 95%",
     spread: "Spread",
     status: "Status",
     account: "Account",
@@ -535,7 +539,10 @@ function operationStats(ops) {
   const rated = ops.filter((op) => Number(op.rate) && (Math.abs(Number(op.usd_amount)) || Math.abs(Number(op.ves_amount))));
   const weightedRate = rated.reduce((sum, op) => sum + Number(op.rate) * Math.abs(Number(op.usd_amount || 0)), 0);
   const weight = rated.reduce((sum, op) => sum + Math.abs(Number(op.usd_amount || 0)), 0);
-  return { count: ops.length, usd, ves, weighted: weight ? weightedRate / weight : 0 };
+  const binanceEligible = ops.filter((op) => ["buy_usd", "sell_usd"].includes(op.type) && Number(op.rate));
+  const binanceOk = binanceEligible.filter((op) => binanceSnapshot(op)?.within_range === true).length;
+  const binanceOkPercent = binanceEligible.length ? (binanceOk / binanceEligible.length) * 100 : null;
+  return { count: ops.length, usd, ves, weighted: weight ? weightedRate / weight : 0, binanceEligible: binanceEligible.length, binanceOk, binanceOkPercent };
 }
 
 function metricCards(ops) {
@@ -546,6 +553,7 @@ function metricCards(ops) {
       <article class="metric-card"><span>${t("netUsd")}</span><strong class="${stats.usd < 0 ? "amount-negative" : "amount-positive"}">${money(stats.usd, "USD")}</strong></article>
       <article class="metric-card"><span>${t("netVes")}</span><strong class="${stats.ves < 0 ? "amount-negative" : "amount-positive"}">${money(stats.ves, "VES")}</strong></article>
       <article class="metric-card"><span>${t("weightedRate")}</span><strong>${stats.weighted ? money(stats.weighted) : "—"}</strong></article>
+      <article class="metric-card"><span>${t("binanceOkRate")} · ${t("binanceOkTarget")}</span><strong class="${stats.binanceOkPercent !== null && stats.binanceOkPercent < 95 ? "amount-negative" : "amount-positive"}">${stats.binanceOkPercent === null ? "—" : `${money(stats.binanceOkPercent)}%`}</strong><div class="muted">${stats.binanceOk}/${stats.binanceEligible} ${t("operations")}</div></article>
     </div>
   `;
 }
