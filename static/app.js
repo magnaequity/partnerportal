@@ -63,6 +63,7 @@ const labels = {
     withinRange: "OK",
     outsideRange: "NO OK",
     binanceRange: "Binance",
+    rateRanges: "Rangos",
     binanceOkRate: "Binance OK %",
     binanceOkTarget: "Meta 95%",
     spread: "Spread",
@@ -228,6 +229,7 @@ const labels = {
     withinRange: "OK",
     outsideRange: "NO OK",
     binanceRange: "Binance",
+    rateRanges: "Ranges",
     binanceOkRate: "Binance OK %",
     binanceOkTarget: "Target 95%",
     spread: "Spread",
@@ -1180,13 +1182,15 @@ function openRateModal(id) {
   openModal(t("loadRate"), `
     <form data-rate-form="${id}" class="form-grid">
       <label>${t("achievedRate")}<input name="rate" type="number" step="0.0001" value="${op.rate || ""}" data-operation-rate required /></label>
-      <label>${t("binance")}<input name="binance_rate" type="number" step="0.0001" value="${op.binance_rate || ""}" data-binance-rate /></label>
+      <label class="binance-field">${t("binance")}
+        <span class="binance-input-wrap">
+          <input name="binance_rate" type="number" step="0.0001" value="${op.binance_rate || ""}" data-binance-rate />
+          <button class="binance-fetch" data-fetch-binance type="button" aria-label="${t("fetchBinance")}" title="${t("fetchBinance")}"><span>◆</span></button>
+        </span>
+        <span class="rate-range" data-rate-range></span>
+      </label>
       <input name="binance_consulted_at" type="hidden" value="${binanceSnapshot(op)?.consulted_at || ""}" data-binance-consulted-at />
       <input name="binance_source" type="hidden" value="${binanceSnapshot(op)?.source || ""}" data-binance-source />
-      <div class="full rate-tools">
-        <button class="subtle" data-fetch-binance type="button">${t("fetchBinance")}</button>
-        <div class="rate-range" data-rate-range></div>
-      </div>
       <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions(op.type === "sell_usd" ? "USD" : "VES", op.source_account_id)}</select></label>
       <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions(op.type === "sell_usd" ? "VES" : "USD", op.destination_account_id)}</select></label>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
@@ -1204,11 +1208,11 @@ function updateRateRangePreview(form) {
   const node = form.querySelector("[data-rate-range]");
   if (!node) return;
   if (!range) {
-    node.innerHTML = `<span class="muted">${t("binanceRange")}: —</span>`;
+    node.innerHTML = `<span class="muted">${t("rateRanges")}: —</span>`;
     return;
   }
   node.innerHTML = `
-    <span>${t("binanceRange")}: ${money(range.lower)} - ${money(range.upper)}</span>
+    <span>${t("rateRanges")}: ${money(range.lower)} - ${money(range.upper)}</span>
     <span class="range-pill ${range.withinRange ? "ok" : "warning"}">${range.withinRange ? t("withinRange") : t("outsideRange")}</span>
   `;
 }
