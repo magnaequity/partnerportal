@@ -1185,7 +1185,7 @@ function openRateModal(id) {
       <label class="binance-field">${t("binance")}
         <span class="binance-input-wrap">
           <input name="binance_rate" type="number" step="0.0001" value="${op.binance_rate || ""}" data-binance-rate />
-          <button class="binance-fetch" data-fetch-binance type="button" aria-label="${t("fetchBinance")}" title="${t("fetchBinance")}"><span>◆</span></button>
+          <button class="binance-fetch" data-fetch-binance type="button" aria-label="${t("fetchBinance")}" title="${t("fetchBinance")}"><img src="/static/assets/binance-icon.svg" alt="" /></button>
         </span>
         <span class="rate-range" data-rate-range></span>
       </label>
