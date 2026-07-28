@@ -114,37 +114,12 @@ button {
   line-height: 1.6;
 }
 
-.login-panel {
-  position: absolute;
-  right: clamp(22px, 5vw, 76px);
-  bottom: 44px;
-  width: min(360px, calc(100vw - 44px));
-  padding: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(18px);
-  z-index: 2;
-}
-
-.login-panel span,
 .eyebrow {
   color: var(--cyan);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.74rem;
   font-weight: 800;
-}
-
-.login-panel strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 1.25rem;
-}
-
-.login-panel p {
-  margin-bottom: 0;
-  color: rgba(255, 255, 255, 0.72);
 }
 
 .app-shell {
@@ -801,13 +776,6 @@ tbody tr:hover {
 @media (max-width: 720px) {
   .landing-copy h1 {
     font-size: 2.55rem;
-  }
-
-  .login-panel {
-    position: relative;
-    right: auto;
-    bottom: auto;
-    margin-top: 24px;
   }
 
   .workspace {
