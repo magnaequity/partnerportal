@@ -148,6 +148,7 @@ const labels = {
     download: "Descargar",
     timeline: "Timeline",
     loadRate: "Cargar tasa",
+    editRate: "Editar tasa",
     achievedRate: "Tasa conseguida",
     outboundAccount: "Cuenta salida",
     inboundAccount: "Cuenta entrada",
@@ -314,6 +315,7 @@ const labels = {
     download: "Download",
     timeline: "Timeline",
     loadRate: "Load rate",
+    editRate: "Edit rate",
     achievedRate: "Achieved rate",
     outboundAccount: "Outbound account",
     inboundAccount: "Inbound account",
@@ -1163,7 +1165,7 @@ function openOperationDetail(id) {
   `, `
     ${canMaster && op.status === "rejected" ? `<button class="subtle" data-status-op="${op.id}" data-status="pending_master" data-status-message="${t("reopened")}" type="button">${t("reopen")}</button>` : ""}
     ${canMaster && op.status === "pending_master" ? `<button class="subtle" data-status-op="${op.id}" data-status="in_negotiation" type="button">${t("inNegotiation")}</button>` : ""}
-    ${canMaster && ["in_negotiation", "pending_master"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${t("loadRate")}</button>` : ""}
+    ${canMaster && ["in_negotiation", "pending_master", "rate_pending_approval"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${op.status === "rate_pending_approval" ? t("editRate") : t("loadRate")}</button>` : ""}
     ${canClientApprove ? `<button class="danger" data-decision-op="${op.id}" data-decision="reject" type="button">${t("reject")}</button><button class="primary" data-decision-op="${op.id}" data-decision="approve" type="button">${t("approve")}</button>` : ""}
     ${canMasterComplete ? `<button class="primary" data-execute-op="${op.id}" type="button">${t("closeOperation")}</button>` : ""}
   `);
@@ -1189,7 +1191,12 @@ function openDecisionModal(id, decision) {
 
 function openRateModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
-  openModal(t("loadRate"), `
+  const rateOnly = op.status === "rate_pending_approval";
+  const accountFields = rateOnly ? "" : `
+      <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions(op.type === "sell_usd" ? "USD" : "VES", op.source_account_id)}</select></label>
+      <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions(op.type === "sell_usd" ? "VES" : "USD", op.destination_account_id)}</select></label>
+  `;
+  openModal(rateOnly ? t("editRate") : t("loadRate"), `
     <form data-rate-form="${id}" class="form-grid">
       <label>${t("achievedRate")}<input name="rate" type="number" step="0.0001" value="${op.rate || ""}" data-operation-rate required /></label>
       <label class="binance-field">${t("binance")}
@@ -1201,8 +1208,7 @@ function openRateModal(id) {
       </label>
       <input name="binance_consulted_at" type="hidden" value="${binanceSnapshot(op)?.consulted_at || ""}" data-binance-consulted-at />
       <input name="binance_source" type="hidden" value="${binanceSnapshot(op)?.source || ""}" data-binance-source />
-      <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions(op.type === "sell_usd" ? "USD" : "VES", op.source_account_id)}</select></label>
-      <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions(op.type === "sell_usd" ? "VES" : "USD", op.destination_account_id)}</select></label>
+      ${accountFields}
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
       <div class="full"><button class="primary" type="submit">${t("sendClientApproval")}</button></div>
     </form>

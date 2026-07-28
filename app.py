@@ -40,6 +40,7 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ROLE_MASTER = "magna_admin"
 CLIENT_ROLES = ("super_approver", "treasury", "finance")
 BINANCE_RATE_URL = "https://consulta-rates.insularcambios.com/v1/tasas/binance"
+RATE_EDITABLE_STATUSES = ("pending_master", "in_negotiation", "rate_pending_approval")
 UNASSIGNED_USE = "unassigned_use"
 INITIAL_PASSWORD_ENVS = {
     "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
@@ -955,6 +956,8 @@ def set_operation_rate(operation_id):
     op = operation_payload(operation_id)
     if not op:
         return jsonify({"error": "Operacion no encontrada."}), 404
+    if op["status"] not in RATE_EDITABLE_STATUSES:
+        return jsonify({"error": "La tasa solo puede editarse antes de la aprobacion del cliente."}), 400
     rate = Decimal(str(data["rate"]))
     if rate <= 0:
         return jsonify({"error": "La tasa debe ser mayor a cero."}), 400
@@ -966,6 +969,8 @@ def set_operation_rate(operation_id):
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
     usd_amount, ves_amount = recalculate_amounts_for_rate(op, rate)
     validation = binance_validation(rate, binance_rate)
+    source_account_id = None if op["status"] == "rate_pending_approval" else data.get("source_account_id")
+    destination_account_id = None if op["status"] == "rate_pending_approval" else data.get("destination_account_id")
     metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
     metadata["binance_snapshot"] = {
         "reference_rate": money(binance_rate),
@@ -990,8 +995,8 @@ def set_operation_rate(operation_id):
             money(rate),
             money(binance_rate),
             money(spread),
-            data.get("source_account_id"),
-            data.get("destination_account_id"),
+            source_account_id,
+            destination_account_id,
             money(usd_amount),
             money(ves_amount),
             json.dumps(metadata),
@@ -1000,7 +1005,8 @@ def set_operation_rate(operation_id):
             operation_id,
         ),
     )
-    log_event(operation_id, "rate_loaded", "Master cargo tasa y referencia Binance.", user["id"], data.get("comment"), {"spread": money(spread), "binance_validation": validation})
+    description = "Master edito tasa y reinicio vigencia." if op["status"] == "rate_pending_approval" else "Master cargo tasa y referencia Binance."
+    log_event(operation_id, "rate_loaded", description, user["id"], data.get("comment"), {"spread": money(spread), "binance_validation": validation})
     return jsonify({"operation": operation_payload(operation_id)})
 
 
