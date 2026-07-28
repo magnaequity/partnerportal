@@ -40,6 +40,7 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ROLE_MASTER = "magna_admin"
 CLIENT_ROLES = ("super_approver", "treasury", "finance")
 BINANCE_RATE_URL = "https://consulta-rates.insularcambios.com/v1/tasas/binance"
+UNASSIGNED_USE = "unassigned_use"
 INITIAL_PASSWORD_ENVS = {
     "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
     "usr-yango-super": "YANGO_APPROVER_PASSWORD",
@@ -866,12 +867,14 @@ def create_treasury_request():
     if request.is_json:
         data = request.get_json(force=True)
     op_type, usd_amount, ves_amount = normalize_treasury_amounts(data)
-    allocation_target = ves_amount if op_type == "sell_usd" else None
+    usage_category_id = data.get("usage_category_id")
+    requires_payment_allocation = op_type == "sell_usd" and usage_category_id != UNASSIGNED_USE
+    allocation_target = ves_amount if requires_payment_allocation else None
     allocations, _allocation_total, allocation_error = parse_payment_allocations(
         data,
         allocation_target,
-        required=op_type == "sell_usd",
-        require_proofs=op_type == "sell_usd",
+        required=requires_payment_allocation,
+        require_proofs=requires_payment_allocation,
         files=request.files,
     )
     if allocation_error:
@@ -879,7 +882,8 @@ def create_treasury_request():
     operation_id = make_id("BUY" if op_type == "buy_usd" else "SELL")
     ts = now_iso()
     metadata = {
-        "usage_category_id": data.get("usage_category_id"),
+        "usage_category_id": usage_category_id,
+        "use_unassigned": usage_category_id == UNASSIGNED_USE,
         "input_currency": data.get("input_currency"),
         "comment": data.get("comment", ""),
         "document_type": data.get("document_type", ""),
@@ -1182,13 +1186,15 @@ def execute_operation(operation_id):
         ves_amount = money(op.get("ves_amount") or 0)
     allocations = []
     if op["type"] == "sell_usd":
-        allocations, _allocation_total, allocation_error = parse_payment_allocations(
-            {"payment_allocations": metadata_value(op, "payment_allocations", [])},
-            ves_amount,
-            required=True,
-        )
-        if allocation_error:
-            return jsonify({"error": allocation_error}), 400
+        allocation_items = metadata_value(op, "payment_allocations", [])
+        if allocation_items:
+            allocations, _allocation_total, allocation_error = parse_payment_allocations(
+                {"payment_allocations": allocation_items},
+                ves_amount,
+                required=True,
+            )
+            if allocation_error:
+                return jsonify({"error": allocation_error}), 400
     execute(
         """
         update operations
@@ -1205,7 +1211,8 @@ def execute_operation(operation_id):
     elif op["type"] == "sell_usd":
         update_balance(source_account, usd_amount, "Salida USD por venta", operation_id)
         update_balance(destination_account, ves_amount, "Entrada VES por venta", operation_id)
-        create_payment_requests_from_sale({**op, "destination_account_id": destination_account}, allocations, destination_account, user["id"])
+        if allocations:
+            create_payment_requests_from_sale({**op, "destination_account_id": destination_account}, allocations, destination_account, user["id"])
     elif op["type"] == "payment":
         update_balance(source_account, -abs(ves_amount or op.get("requested_amount") or 0), "Dispersion de pago", operation_id)
     log_event(operation_id, "completed", "Master completo la operacion y cargo los soportes requeridos.", user["id"], data.get("comment"))

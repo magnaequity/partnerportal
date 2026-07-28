@@ -9,6 +9,7 @@ const state = {
 
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => [...document.querySelectorAll(selector)];
+const UNASSIGNED_USE = "unassigned_use";
 
 const labels = {
   es: {
@@ -119,6 +120,7 @@ const labels = {
     inputCurrency: "Imputar monto en",
     expectedRate: "Tasa esperada",
     usage: "Uso",
+    unassignedUse: "Sin uso asignado todavía",
     beneficiary: "Beneficiario",
     paymentDistribution: "Distribución de pagos",
     selectBeneficiaries: "Selecciona un beneficiario y agrégalo a la distribución.",
@@ -283,6 +285,7 @@ const labels = {
     inputCurrency: "Input amount in",
     expectedRate: "Expected rate",
     usage: "Use",
+    unassignedUse: "Use is not determined yet",
     beneficiary: "Beneficiary",
     paymentDistribution: "Payment distribution",
     selectBeneficiaries: "Select a beneficiary and add it to the distribution.",
@@ -901,12 +904,13 @@ function openTreasuryModal() {
       <label>${t("expectedRate")}<input name="expected_rate" type="number" step="0.0001" /></label>
       <label>${t("usage")}
         <select name="usage_category_id" data-usage-category>
+          <option value="${UNASSIGNED_USE}">${t("unassignedUse")}</option>
           ${categories.map((cat) => `<option value="${cat.id}">${cat.name}</option>`).join("")}
         </select>
       </label>
       <input type="hidden" name="payment_allocations" data-payment-allocations />
       <div class="full allocation-panel" data-allocation-panel>
-        ${paymentAllocationMarkup(categories[0]?.id)}
+        ${paymentAllocationMarkup(UNASSIGNED_USE)}
       </div>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
@@ -916,6 +920,7 @@ function openTreasuryModal() {
 }
 
 function beneficiariesForCategory(categoryId) {
+  if (categoryId === UNASSIGNED_USE) return [];
   const category = categoryName(categoryId).toLowerCase();
   const beneficiaryCategory = category.includes("partner") ? "partner" : "provider";
   return state.data.beneficiaries.filter((ben) => ben.category === beneficiaryCategory);
@@ -1009,12 +1014,12 @@ function selectedPaymentAllocations(form) {
 function updatePaymentAllocationSummary(form) {
   if (!form) return;
   const panel = form.querySelector("[data-allocation-panel]");
-  const isSell = form.elements.operation_side?.value === "sell";
-  if (panel) panel.hidden = !isSell;
+  const requiresAllocations = form.elements.operation_side?.value === "sell" && form.elements.usage_category_id?.value !== UNASSIGNED_USE;
+  if (panel) panel.hidden = !requiresAllocations;
   refreshAllocationPicker(form);
-  const target = isSell ? targetVesForTreasuryForm(form) : 0;
+  const target = requiresAllocations ? targetVesForTreasuryForm(form) : 0;
   const total = selectedPaymentAllocations(form).reduce((sum, item) => sum + item.amount_ves, 0);
-  const matches = isSell && target > 0 && Math.round(total * 100) === Math.round(target * 100);
+  const matches = !requiresAllocations || (target > 0 && Math.round(total * 100) === Math.round(target * 100));
   const totalNode = form.querySelector("[data-allocation-total]");
   const targetNode = form.querySelector("[data-allocation-target]");
   const proofNode = form.querySelector("[data-allocation-proof]");
@@ -1025,7 +1030,7 @@ function updatePaymentAllocationSummary(form) {
     proofNode.classList.toggle("ok", matches);
   }
   const hidden = form.querySelector("[data-payment-allocations]");
-  if (hidden) hidden.value = isSell ? JSON.stringify(selectedPaymentAllocations(form)) : "[]";
+  if (hidden) hidden.value = requiresAllocations ? JSON.stringify(selectedPaymentAllocations(form)) : "[]";
   return matches;
 }
 
@@ -1377,6 +1382,10 @@ document.addEventListener("change", (event) => {
     const form = usage.closest("[data-treasury-form]");
     const panel = form?.querySelector("[data-allocation-panel]");
     if (panel) panel.innerHTML = paymentAllocationMarkup(usage.value);
+    if (usage.value === UNASSIGNED_USE) {
+      const hidden = form?.querySelector("[data-payment-allocations]");
+      if (hidden) hidden.value = "[]";
+    }
     updatePaymentAllocationSummary(form);
   }
   const treasurySide = event.target.closest("[data-treasury-side]");
@@ -1419,7 +1428,8 @@ document.addEventListener("submit", async (event) => {
     }
     if (form.matches("[data-treasury-form]")) {
       event.preventDefault();
-      if (form.elements.operation_side?.value === "sell" && !updatePaymentAllocationSummary(form)) {
+      const requiresAllocations = form.elements.operation_side?.value === "sell" && form.elements.usage_category_id?.value !== UNASSIGNED_USE;
+      if (requiresAllocations && !updatePaymentAllocationSummary(form)) {
         toast(t("allocationMismatch"));
         return;
       }
