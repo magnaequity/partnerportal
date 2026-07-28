@@ -539,31 +539,44 @@ tbody tr:hover {
 }
 
 .binance-input-wrap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
-  gap: 8px;
-  align-items: stretch;
+  display: block;
+  position: relative;
 }
 
 .binance-input-wrap input {
-  height: 41px;
+  width: 100%;
+  padding-right: 56px;
+}
+
+.binance-input-wrap input::-webkit-outer-spin-button,
+.binance-input-wrap input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.binance-input-wrap input[type="number"] {
+  appearance: textfield;
 }
 
 .binance-fetch {
-  width: 44px;
-  height: 41px;
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 34px;
+  height: 34px;
   border: 1px solid rgba(246, 195, 68, 0.44);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 0;
   display: grid;
   place-items: center;
   background: #f0b90b;
-  box-shadow: 0 10px 22px rgba(240, 185, 11, 0.18);
+  box-shadow: 0 8px 18px rgba(240, 185, 11, 0.18);
+  transform: translateY(-50%);
 }
 
 .binance-fetch img {
-  width: 23px;
-  height: 23px;
+  width: 20px;
+  height: 20px;
   display: block;
 }
 
