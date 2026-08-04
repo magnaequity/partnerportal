@@ -30,15 +30,11 @@
         </div>
         <nav id="nav" class="nav"></nav>
         <div class="drawer-controls">
-          <label>
-            <span data-i18n="roleView">Vista / rol</span>
-            <select id="roleSelect">
-              <option value="magna_admin" data-role-option="magna_admin">Master · Magna</option>
-              <option value="super_approver" data-role-option="super_approver">Cliente · Super-approver</option>
-              <option value="treasury" data-role-option="treasury">Cliente · Tesorería</option>
-              <option value="finance" data-role-option="finance">Cliente · Finanzas</option>
-            </select>
-          </label>
+          <div class="session-card">
+            <span data-i18n="currentRole">Rol activo</span>
+            <strong id="roleBadge">—</strong>
+            <button id="logoutButton" class="ghost-button" type="button" data-i18n="logout">Salir</button>
+          </div>
         </div>
       </aside>
 

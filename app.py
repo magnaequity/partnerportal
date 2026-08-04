@@ -40,7 +40,7 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ROLE_MASTER = "magna_admin"
 CLIENT_ROLES = ("super_approver", "treasury", "finance")
 BINANCE_RATE_URL = "https://consulta-rates.insularcambios.com/v1/tasas/binance"
-RATE_EDITABLE_STATUSES = ("pending_master", "in_negotiation", "rate_pending_approval")
+RATE_EDITABLE_STATUSES = ("pending_master", "in_negotiation", "rate_pending_approval", "expired")
 UNASSIGNED_USE = "unassigned_use"
 INITIAL_PASSWORD_ENVS = {
     "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
@@ -111,11 +111,7 @@ def actor():
             user_data = row_to_dict(user)
             if not requested_role or user_data["role"] == requested_role:
                 return user_data
-    role = requested_role or ROLE_MASTER
-    user = query("select * from users where role = ? order by id limit 1", (role,), one=True)
-    if not user:
-        user = query("select * from users where role = ? limit 1", (ROLE_MASTER,), one=True)
-    return row_to_dict(user)
+    return None
 
 
 def require_roles(*roles):
@@ -440,10 +436,13 @@ def enrich_operation(op):
 
 @app.get("/api/bootstrap")
 def bootstrap():
+    current_user = actor()
+    if not current_user:
+        return jsonify({"error": "Sesion expirada. Inicia sesion nuevamente."}), 401
     operations = [operation_payload(row["id"]) for row in query("select id from operations order by created_at desc")]
     return jsonify(
         {
-            "actor": actor(),
+            "actor": current_user,
             "partners": [row_to_dict(x) for x in query("select * from partners order by name")],
             "users": [row_to_dict(x) for x in query("select * from users order by role, name")],
             "accounts": [row_to_dict(x) for x in query("select * from accounts where status != 'deleted' order by owner, currency, name")],
@@ -861,7 +860,7 @@ def get_binance_rate():
 
 @app.post("/api/treasury-requests")
 def create_treasury_request():
-    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    user, error = require_roles(*CLIENT_ROLES)
     if error:
         return error
     data = request.form.to_dict()
@@ -969,8 +968,9 @@ def set_operation_rate(operation_id):
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
     usd_amount, ves_amount = recalculate_amounts_for_rate(op, rate)
     validation = binance_validation(rate, binance_rate)
-    source_account_id = None if op["status"] == "rate_pending_approval" else data.get("source_account_id")
-    destination_account_id = None if op["status"] == "rate_pending_approval" else data.get("destination_account_id")
+    rate_only_update = op["status"] in ("rate_pending_approval", "expired")
+    source_account_id = None if rate_only_update else data.get("source_account_id")
+    destination_account_id = None if rate_only_update else data.get("destination_account_id")
     metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
     metadata["binance_snapshot"] = {
         "reference_rate": money(binance_rate),
@@ -1005,7 +1005,7 @@ def set_operation_rate(operation_id):
             operation_id,
         ),
     )
-    description = "Master edito tasa y reinicio vigencia." if op["status"] == "rate_pending_approval" else "Master cargo tasa y referencia Binance."
+    description = "Master edito tasa y reinicio vigencia." if rate_only_update else "Master cargo tasa y referencia Binance."
     log_event(operation_id, "rate_loaded", description, user["id"], data.get("comment"), {"spread": money(spread), "binance_validation": validation})
     return jsonify({"operation": operation_payload(operation_id)})
 
@@ -1016,6 +1016,11 @@ def decide_operation(operation_id):
     if error:
         return error
     data = parse_json()
+    op = operation_payload(operation_id)
+    if not op:
+        return jsonify({"error": "Operacion no encontrada."}), 404
+    if op["status"] != "rate_pending_approval":
+        return jsonify({"error": "Solo se pueden aprobar o rechazar tasas pendientes de aprobacion."}), 400
     comment = (data.get("comment") or "").strip()
     if not comment:
         return jsonify({"error": "El comentario es obligatorio para trazabilidad."}), 400
@@ -1177,7 +1182,7 @@ def execute_operation(operation_id):
     else:
         if op["status"] != "approved":
             return jsonify({"error": "Solo se pueden completar operaciones aprobadas."}), 400
-        required_files = ("usd_exit_support", "ves_entry_support")
+        required_files = ("ves_exit_support",) if op["type"] == "buy_usd" else ("usd_exit_support",)
     missing_files = [key for key in required_files if key not in request.files or not request.files[key].filename]
     if missing_files:
         return jsonify({"error": "Debes cargar los soportes requeridos para completar la operacion."}), 400

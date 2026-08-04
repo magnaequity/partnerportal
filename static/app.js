@@ -1,5 +1,5 @@
 const state = {
-  role: localStorage.getItem("partnerportal_role") || "magna_admin",
+  role: localStorage.getItem("partnerportal_role") || "",
   userId: localStorage.getItem("partnerportal_user_id") || "",
   lang: localStorage.getItem("partnerportal_lang") || "es",
   view: "dashboard",
@@ -155,7 +155,9 @@ const labels = {
     sendClientApproval: "Enviar a aprobación cliente",
     executeOperation: "Completar operación",
     usdExitSupport: "Prueba movimiento USD",
-    vesEntrySupport: "Prueba movimiento VES",
+    vesExitSupport: "Prueba salida VES",
+    usdReceiptSupport: "Prueba recepción USD (opcional)",
+    vesReceiptSupport: "Prueba recepción VES (opcional)",
     inNegotiation: "En negociación",
     reopened: "Solicitud reabierta.",
     requiredComment: "Comentario obligatorio",
@@ -174,10 +176,12 @@ const labels = {
     superApproverRole: "Cliente · Super-approver",
     treasuryRole: "Cliente · Tesorería",
     financeRole: "Cliente · Finanzas",
+    currentRole: "Rol activo",
+    logout: "Salir",
+    sessionExpired: "Tu sesión expiró. Inicia sesión nuevamente.",
     usd: "USD",
     ves: "VES",
     date: "Fecha",
-    roleView: "Vista / rol",
   },
   en: {
     landingEyebrow: "Partner Treasury Portal",
@@ -322,7 +326,9 @@ const labels = {
     sendClientApproval: "Send to client approval",
     executeOperation: "Complete transaction",
     usdExitSupport: "USD movement proof",
-    vesEntrySupport: "VES movement proof",
+    vesExitSupport: "VES outbound proof",
+    usdReceiptSupport: "USD receipt proof (optional)",
+    vesReceiptSupport: "VES receipt proof (optional)",
     inNegotiation: "In negotiation",
     reopened: "Request reopened.",
     requiredComment: "Required comment",
@@ -341,10 +347,12 @@ const labels = {
     superApproverRole: "Client · Super-approver",
     treasuryRole: "Client · Treasury",
     financeRole: "Client · Finance",
+    currentRole: "Active role",
+    logout: "Log out",
+    sessionExpired: "Your session expired. Please sign in again.",
     usd: "USD",
     ves: "VES",
     date: "Date",
-    roleView: "Role view",
   },
 };
 
@@ -364,20 +372,23 @@ function t(key) {
   return labels[state.lang]?.[key] || labels.es[key] || key;
 }
 
-function applyLanguage() {
-  document.documentElement.lang = state.lang;
-  qsa("[data-i18n]").forEach((node) => {
-    node.textContent = t(node.dataset.i18n);
-  });
+function roleLabel(role) {
   const roleLabels = {
     magna_admin: t("masterRole"),
     super_approver: t("superApproverRole"),
     treasury: t("treasuryRole"),
     finance: t("financeRole"),
   };
-  qsa("[data-role-option]").forEach((node) => {
-    node.textContent = roleLabels[node.dataset.roleOption] || node.textContent;
+  return roleLabels[role] || role || "—";
+}
+
+function applyLanguage() {
+  document.documentElement.lang = state.lang;
+  qsa("[data-i18n]").forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
   });
+  const roleBadge = qs("#roleBadge");
+  if (roleBadge) roleBadge.textContent = roleLabel(state.role);
   const toggleLabel = state.lang.toUpperCase();
   const languageToggle = qs("#languageToggle");
   const landingLang = qs("#landingLang");
@@ -438,16 +449,6 @@ function headers(extra = {}) {
   return { "X-Role": state.role, "X-User-Id": state.userId, ...extra };
 }
 
-function activeUserForRole(role) {
-  return state.data?.users.find((user) => user.role === role && user.status === "active");
-}
-
-function syncUserForRole(role) {
-  const user = activeUserForRole(role);
-  state.userId = user?.id || "";
-  localStorage.setItem("partnerportal_user_id", state.userId);
-}
-
 async function api(path, options = {}) {
   const isForm = options.body instanceof FormData;
   const response = await fetch(path, {
@@ -471,20 +472,44 @@ function toast(message) {
   }, 3600);
 }
 
+function showAppShell() {
+  qs("#landing").classList.add("hidden");
+  qs("#appShell").classList.remove("hidden");
+}
+
+function showLanding() {
+  qs("#appShell").classList.add("hidden");
+  qs("#landing").classList.remove("hidden");
+}
+
+function clearSession() {
+  state.role = "";
+  state.userId = "";
+  state.data = null;
+  state.view = "dashboard";
+  localStorage.removeItem("partnerportal_role");
+  localStorage.removeItem("partnerportal_user_id");
+}
+
 async function load() {
   state.data = await api("/api/bootstrap");
   if (state.data.actor?.id) {
     state.userId = state.data.actor.id;
+    state.role = state.data.actor.role;
     localStorage.setItem("partnerportal_user_id", state.userId);
+    localStorage.setItem("partnerportal_role", state.role);
   }
   renderShell();
   renderView();
 }
 
 function renderShell() {
-  qs("#roleSelect").value = state.role;
   qs("#actorName").textContent = state.data.actor.name;
+  qs("#roleBadge").textContent = roleLabel(state.role);
   applyLanguage();
+  if (state.role !== "magna_admin" && navItems.find(([view, , scope]) => view === state.view && scope === "master")) {
+    state.view = "dashboard";
+  }
   qs("#nav").innerHTML = navItems
     .filter(([, , scope]) => scope !== "master" || state.role === "magna_admin")
     .map(([view, label]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-nav="${view}" type="button">${t(label)}</button>`)
@@ -604,7 +629,7 @@ function renderTreasury() {
     <section class="panel">
       <div class="panel-header">
         <h2>${t("treasuryRequests")}</h2>
-        <button class="primary" data-action="open-treasury" type="button">${t("newRequest")}</button>
+        ${state.role === "magna_admin" ? "" : `<button class="primary" data-action="open-treasury" type="button">${t("newRequest")}</button>`}
       </div>
       ${operationTable(ops, true)}
     </section>
@@ -612,7 +637,7 @@ function renderTreasury() {
 }
 
 function renderApprovals() {
-  const statuses = state.role === "magna_admin" ? ["pending_master", "in_negotiation", "approved", "rejected"] : ["rate_pending_approval"];
+  const statuses = state.role === "magna_admin" ? ["pending_master", "in_negotiation", "rate_pending_approval", "approved", "rejected", "expired"] : ["rate_pending_approval"];
   const ops = state.data.operations.filter((op) => statuses.includes(op.status));
   qs("#viewBody").innerHTML = `
     <section class="panel">
@@ -908,14 +933,14 @@ function openTreasuryModal() {
         </select>
       </label>
       <label>${t("inputCurrency")}
-        <select name="input_currency">
+        <select name="input_currency" data-input-currency>
           <option value="VES">VES</option>
           <option value="USD">USD</option>
         </select>
       </label>
-      <label>${t("amountUsd")}<input name="usd_amount" type="number" step="0.01" /></label>
-      <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" /></label>
-      <label>${t("expectedRate")}<input name="expected_rate" type="number" step="0.0001" /></label>
+      <label>${t("amountUsd")}<input name="usd_amount" type="number" step="0.01" data-treasury-usd /></label>
+      <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" data-treasury-ves /></label>
+      <label>${t("expectedRate")}<input name="expected_rate" type="number" step="0.0001" data-treasury-rate /></label>
       <label>${t("usage")}
         <select name="usage_category_id" data-usage-category>
           <option value="${UNASSIGNED_USE}">${t("unassignedUse")}</option>
@@ -930,7 +955,7 @@ function openTreasuryModal() {
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
     </form>
   `);
-  updatePaymentAllocationSummary(qs("[data-treasury-form]"));
+  syncTreasuryAmounts(qs("[data-treasury-form]"));
 }
 
 function beneficiariesForCategory(categoryId) {
@@ -1014,6 +1039,28 @@ function targetVesForTreasuryForm(form) {
   if (ves) return Math.abs(ves);
   if (usd && rate) return Math.abs(usd * rate);
   return 0;
+}
+
+function decimalInput(value) {
+  return Number(value || 0).toFixed(2);
+}
+
+function syncTreasuryAmounts(form) {
+  if (!form) return;
+  const inputCurrency = form.elements.input_currency?.value || "VES";
+  const usdInput = form.elements.usd_amount;
+  const vesInput = form.elements.ves_amount;
+  const rate = Number(form.elements.expected_rate?.value || 0);
+  if (!usdInput || !vesInput) return;
+  usdInput.readOnly = inputCurrency === "VES";
+  vesInput.readOnly = inputCurrency === "USD";
+  if (rate > 0 && inputCurrency === "USD" && Number(usdInput.value || 0)) {
+    vesInput.value = decimalInput(Number(usdInput.value || 0) * rate);
+  }
+  if (rate > 0 && inputCurrency === "VES" && Number(vesInput.value || 0)) {
+    usdInput.value = decimalInput(Number(vesInput.value || 0) / rate);
+  }
+  updatePaymentAllocationSummary(form);
 }
 
 function selectedPaymentAllocations(form) {
@@ -1165,7 +1212,7 @@ function openOperationDetail(id) {
   `, `
     ${canMaster && op.status === "rejected" ? `<button class="subtle" data-status-op="${op.id}" data-status="pending_master" data-status-message="${t("reopened")}" type="button">${t("reopen")}</button>` : ""}
     ${canMaster && op.status === "pending_master" ? `<button class="subtle" data-status-op="${op.id}" data-status="in_negotiation" type="button">${t("inNegotiation")}</button>` : ""}
-    ${canMaster && ["in_negotiation", "pending_master", "rate_pending_approval"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${op.status === "rate_pending_approval" ? t("editRate") : t("loadRate")}</button>` : ""}
+    ${canMaster && ["in_negotiation", "pending_master", "rate_pending_approval", "expired"].includes(op.status) ? `<button class="primary" data-rate-op="${op.id}" type="button">${["rate_pending_approval", "expired"].includes(op.status) ? t("editRate") : t("loadRate")}</button>` : ""}
     ${canClientApprove ? `<button class="danger" data-decision-op="${op.id}" data-decision="reject" type="button">${t("reject")}</button><button class="primary" data-decision-op="${op.id}" data-decision="approve" type="button">${t("approve")}</button>` : ""}
     ${canMasterComplete ? `<button class="primary" data-execute-op="${op.id}" type="button">${t("closeOperation")}</button>` : ""}
   `);
@@ -1191,7 +1238,7 @@ function openDecisionModal(id, decision) {
 
 function openRateModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
-  const rateOnly = op.status === "rate_pending_approval";
+  const rateOnly = ["rate_pending_approval", "expired"].includes(op.status);
   const accountFields = rateOnly ? "" : `
       <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions(op.type === "sell_usd" ? "USD" : "VES", op.source_account_id)}</select></label>
       <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions(op.type === "sell_usd" ? "VES" : "USD", op.destination_account_id)}</select></label>
@@ -1264,6 +1311,12 @@ function openExecuteModal(id) {
   }
   const usdAmount = Number(op.usd_amount || 0);
   const vesAmount = Number(op.ves_amount || 0);
+  const outboundProof = op.type === "buy_usd"
+    ? { name: "ves_exit_support", label: t("vesExitSupport"), accept: "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" }
+    : { name: "usd_exit_support", label: t("usdExitSupport"), accept: "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" };
+  const receiptProof = op.type === "buy_usd"
+    ? { name: "usd_receipt_support", label: t("usdReceiptSupport"), accept: "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" }
+    : { name: "ves_receipt_support", label: t("vesReceiptSupport"), accept: "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" };
   openModal(t("executeOperation"), `
     <form data-execute-form="${id}" class="form-grid" enctype="multipart/form-data">
       <div class="readonly-amount">
@@ -1280,8 +1333,8 @@ function openExecuteModal(id) {
       <input name="ves_amount" type="hidden" value="${vesAmount}" />
       <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions("", op.source_account_id)}</select></label>
       <label>${t("inboundAccount")}<select name="destination_account_id">${accountOptions("", op.destination_account_id)}</select></label>
-      <label class="full">${t("usdExitSupport")}<input name="usd_exit_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
-      <label class="full">${t("vesEntrySupport")}<input name="ves_entry_support" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" required /></label>
+      <label class="full">${outboundProof.label}<input name="${outboundProof.name}" type="file" accept="${outboundProof.accept}" required /></label>
+      <label class="full">${receiptProof.label}<input name="${receiptProof.name}" type="file" accept="${receiptProof.accept}" /></label>
       <label class="full">${t("comment")}<textarea name="comment" rows="3"></textarea></label>
       <div class="full"><button class="primary" type="submit">${t("closeOperation")}</button></div>
     </form>
@@ -1316,6 +1369,14 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("#enterApp")) {
     openLoginModal();
   }
+  if (event.target.closest("#logoutButton")) {
+    clearSession();
+    closeDrawer();
+    closeModal();
+    showLanding();
+    applyLanguage();
+    return;
+  }
   if (event.target.closest("#languageToggle") || event.target.closest("#landingLang")) {
     state.lang = state.lang === "es" ? "en" : "es";
     localStorage.setItem("partnerportal_lang", state.lang);
@@ -1325,7 +1386,7 @@ document.addEventListener("click", async (event) => {
       renderView();
     }
   }
-  if (event.target.closest("[data-action='open-treasury']")) openTreasuryModal();
+  if (event.target.closest("[data-action='open-treasury']") && state.role !== "magna_admin") openTreasuryModal();
   if (event.target.closest("[data-action='new-account']")) openAccountModal(event.target.closest("[data-action]").dataset.owner);
   if (event.target.closest("[data-action='new-beneficiary']")) openBeneficiaryModal();
   if (event.target.closest("[data-action='new-user']")) openUserModal();
@@ -1409,7 +1470,9 @@ document.addEventListener("change", (event) => {
     updatePaymentAllocationSummary(form);
   }
   const treasurySide = event.target.closest("[data-treasury-side]");
-  if (treasurySide) updatePaymentAllocationSummary(treasurySide.closest("[data-treasury-form]"));
+  if (treasurySide) syncTreasuryAmounts(treasurySide.closest("[data-treasury-form]"));
+  const inputCurrency = event.target.closest("[data-input-currency]");
+  if (inputCurrency) syncTreasuryAmounts(inputCurrency.closest("[data-treasury-form]"));
   if (event.target.closest("[data-allocation-row] input[type='file']")) {
     updatePaymentAllocationSummary(event.target.closest("[data-treasury-form]"));
   }
@@ -1421,7 +1484,10 @@ document.addEventListener("input", (event) => {
     state.filters[filter.dataset.filter] = filter.value;
     renderOperations();
   }
-  if (event.target.closest("[data-allocation-amount]") || event.target.closest("[data-treasury-form] input[name='ves_amount']") || event.target.closest("[data-treasury-form] input[name='usd_amount']") || event.target.closest("[data-treasury-form] input[name='expected_rate']")) {
+  if (event.target.closest("[data-treasury-usd]") || event.target.closest("[data-treasury-ves]") || event.target.closest("[data-treasury-rate]")) {
+    syncTreasuryAmounts(event.target.closest("[data-treasury-form]"));
+  }
+  if (event.target.closest("[data-allocation-amount]")) {
     updatePaymentAllocationSummary(event.target.closest("[data-treasury-form]"));
   }
   if (event.target.closest("[data-operation-rate]") || event.target.closest("[data-binance-rate]")) {
@@ -1440,8 +1506,7 @@ document.addEventListener("submit", async (event) => {
       localStorage.setItem("partnerportal_role", state.role);
       localStorage.setItem("partnerportal_user_id", state.userId);
       closeModal();
-      qs("#landing").classList.add("hidden");
-      qs("#appShell").classList.remove("hidden");
+      showAppShell();
       await load();
       openDrawer();
       toast(`${t("loginTitle")}: ${result.user.name}`);
@@ -1499,12 +1564,16 @@ document.addEventListener("submit", async (event) => {
     if (form.matches("[data-execute-form]")) {
       event.preventDefault();
       const data = new FormData(form);
-      if (data.has("payment_execution_support")) {
-        data.append("payment_execution_support_label", t("paymentExecutionSupport"));
-      } else {
-        data.append("usd_exit_support_label", t("usdExitSupport"));
-        data.append("ves_entry_support_label", t("vesEntrySupport"));
-      }
+      const supportLabels = {
+        payment_execution_support: t("paymentExecutionSupport"),
+        usd_exit_support: t("usdExitSupport"),
+        ves_exit_support: t("vesExitSupport"),
+        usd_receipt_support: t("usdReceiptSupport"),
+        ves_receipt_support: t("vesReceiptSupport"),
+      };
+      Object.entries(supportLabels).forEach(([field, label]) => {
+        if (data.has(field)) data.append(`${field}_label`, label);
+      });
       await api(`/api/operations/${form.dataset.executeForm}/execute`, { method: "POST", body: data });
       closeModal();
       await load();
@@ -1519,12 +1588,15 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
-qs("#roleSelect").addEventListener("change", async (event) => {
-  state.role = event.target.value;
-  syncUserForRole(state.role);
-  localStorage.setItem("partnerportal_role", state.role);
-  await load();
-});
-
 applyLanguage();
-load().catch((error) => toast(error.message));
+if (state.userId) {
+  showAppShell();
+  load().catch((error) => {
+    clearSession();
+    showLanding();
+    applyLanguage();
+    toast(error.message || t("sessionExpired"));
+  });
+} else {
+  showLanding();
+}

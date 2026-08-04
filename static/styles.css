@@ -204,6 +204,33 @@ button {
   bottom: 18px;
 }
 
+.session-card {
+  display: grid;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.session-card span {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.session-card strong {
+  color: white;
+  font-size: 0.95rem;
+}
+
+.session-card .ghost-button {
+  width: 100%;
+  color: white;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 label {
   display: grid;
   gap: 7px;
@@ -234,6 +261,11 @@ select:focus,
 textarea:focus {
   border-color: rgba(88, 198, 228, 0.75);
   box-shadow: 0 0 0 4px rgba(88, 198, 228, 0.14);
+}
+
+input[readonly] {
+  color: var(--muted);
+  background: rgba(241, 246, 248, 0.86);
 }
 
 .workspace {
