@@ -41,7 +41,10 @@ const labels = {
     settings: "Configuración",
     recentActivity: "Actividad reciente",
     dailySummary: "Resumen diario",
+    currentBalances: "Saldos actuales",
+    operationalSummary: "Resumen operativo",
     usdFlow: "Compras y ventas USD",
+    usdFlowTitle: "Compra USD / Venta USD",
     dailyRates: "Tasas diarias",
     qtyOperations: "Qty operaciones",
     actionables: "Accionables",
@@ -239,7 +242,10 @@ const labels = {
     settings: "Settings",
     recentActivity: "Recent activity",
     dailySummary: "Daily summary",
+    currentBalances: "Current balances",
+    operationalSummary: "Operating summary",
     usdFlow: "USD buys and sells",
+    usdFlowTitle: "Buy USD / Sell USD",
     dailyRates: "Daily rates",
     qtyOperations: "Qty operations",
     actionables: "Actionables",
@@ -936,6 +942,15 @@ function balanceCards() {
   `;
 }
 
+function dashboardSection(titleKey, body) {
+  return `
+    <section class="dashboard-section">
+      <div class="dashboard-section-title"><h2>${t(titleKey)}</h2></div>
+      ${body}
+    </section>
+  `;
+}
+
 function pendingDashboardCards(ops) {
   const pendingApprovals = ops.filter((op) => op.status === "rate_pending_approval");
   const pendingExecution = ops.filter((op) => op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status)));
@@ -1061,8 +1076,8 @@ function usdFlowChart(rows) {
         <div class="bar-row">
           <span>${compactDate(row.date)}</span>
           <div class="bar-track">
-            <i class="bar positive" style="width:${Math.max((row.buyUsd / maxValue) * 48, row.buyUsd ? 6 : 0)}%">${row.buyUsd ? `<em>${t("buyUsd")}</em>` : ""}</i>
-            <i class="bar negative" style="width:${Math.max((row.sellUsd / maxValue) * 48, row.sellUsd ? 6 : 0)}%">${row.sellUsd ? `<em>${t("sellUsd")}</em>` : ""}</i>
+            <i class="bar positive" style="width:${Math.max((row.buyUsd / maxValue) * 48, row.buyUsd ? 4 : 0)}%"></i>
+            <i class="bar negative" style="width:${Math.max((row.sellUsd / maxValue) * 48, row.sellUsd ? 4 : 0)}%"></i>
           </div>
           <strong>${money(row.buyUsd, "USD")} / ${money(row.sellUsd, "USD")}</strong>
         </div>
@@ -1143,12 +1158,11 @@ function renderDashboard() {
       <div class="panel-header"><h2>${t("dashboard")}</h2></div>
       ${dateFilterMarkup(state.dashboardFilters)}
     </section>
-    ${balanceCards()}
-    ${metricCards(ops)}
-    ${pendingDashboardCards(state.data.operations)}
+    ${dashboardSection("currentBalances", balanceCards())}
+    ${dashboardSection("operationalSummary", `${metricCards(ops)}${pendingDashboardCards(state.data.operations)}`)}
     <section class="grid-2 dashboard-visuals">
       <article class="panel">
-        <div class="panel-header"><h2>${t("usdFlow")}</h2></div>
+        <div class="panel-header"><h2>${t("usdFlowTitle")}</h2></div>
         ${usdFlowChart(rows)}
       </article>
       <article class="panel">

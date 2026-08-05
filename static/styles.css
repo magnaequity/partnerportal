@@ -512,6 +512,25 @@ input[readonly] {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
+  align-items: stretch;
+}
+
+.dashboard-section {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-section-title h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.06rem;
 }
 
 .balance-strip {
@@ -538,7 +557,7 @@ input[readonly] {
 
 .metric-card {
   padding: 11px 12px;
-  min-height: 82px;
+  min-height: 88px;
   overflow: hidden;
   position: relative;
 }
@@ -568,26 +587,22 @@ input[readonly] {
   line-height: 1.12;
 }
 
-.rate-metric {
-  min-height: 102px;
-}
-
 .mini-rate-pills {
   position: relative;
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 6px;
 }
 
 .mini-rate-pills em {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 4px 7px;
+  min-height: 19px;
+  padding: 3px 6px;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-style: normal;
   font-weight: 900;
 }
@@ -817,32 +832,6 @@ input[readonly] {
   right: 50%;
   border-radius: 999px 0 0 999px;
   background: linear-gradient(90deg, rgba(205, 56, 69, 0.92), rgba(205, 56, 69, 0.66));
-}
-
-.bar em {
-  position: absolute;
-  top: 50%;
-  min-width: 62px;
-  padding: 3px 6px;
-  overflow: visible;
-  border-radius: 999px;
-  color: white;
-  font-size: 0.62rem;
-  font-style: normal;
-  font-weight: 900;
-  line-height: 1;
-  text-transform: uppercase;
-  white-space: nowrap;
-  background: inherit;
-  transform: translateY(-50%);
-}
-
-.bar.positive em {
-  left: 6px;
-}
-
-.bar.negative em {
-  right: 6px;
 }
 
 .rate-chart svg {
