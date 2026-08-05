@@ -5,12 +5,18 @@ const state = {
   view: "dashboard",
   data: null,
   filters: {},
+  dashboardFilters: {},
+  lastActionableIds: new Set(),
+  actionableBaselineReady: false,
+  notificationOpen: false,
 };
 
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => [...document.querySelectorAll(selector)];
 const UNASSIGNED_USE = "unassigned_use";
 const INCREASE_POSITION_USE = "increase_position";
+const REFRESH_INTERVAL_MS = 20000;
+let refreshTimer = null;
 
 const labels = {
   es: {
@@ -32,13 +38,17 @@ const labels = {
     accounts: "Beneficiarios",
     clientAccounts: "Cuentas Cliente",
     users: "User Management",
-    balances: "Saldos",
     settings: "Configuración",
     recentActivity: "Actividad reciente",
     dailySummary: "Resumen diario",
     usdFlow: "Compras y ventas USD",
     dailyRates: "Tasas diarias",
     qtyOperations: "Qty operaciones",
+    actionables: "Accionables",
+    notifications: "Notificaciones",
+    noNotifications: "Sin accionables pendientes.",
+    newActionables: "accionable(s) nuevo(s) pendiente(s).",
+    viewPending: "Ver pendientes",
     pendingApprovals: "Aprobaciones pendientes",
     pendingExecution: "Pendientes por ejecutar",
     awaitingClientApproval: "Tasas esperando aprobación cliente",
@@ -226,13 +236,17 @@ const labels = {
     accounts: "Beneficiaries",
     clientAccounts: "Client Accounts",
     users: "User Management",
-    balances: "Balances",
     settings: "Settings",
     recentActivity: "Recent activity",
     dailySummary: "Daily summary",
     usdFlow: "USD buys and sells",
     dailyRates: "Daily rates",
     qtyOperations: "Qty operations",
+    actionables: "Actionables",
+    notifications: "Notifications",
+    noNotifications: "No pending actionables.",
+    newActionables: "new pending actionable(s).",
+    viewPending: "View pending",
     pendingApprovals: "Pending approvals",
     pendingExecution: "Pending execution",
     awaitingClientApproval: "Rates waiting for client approval",
@@ -411,7 +425,6 @@ const navItems = [
   ["accounts", "accounts"],
   ["clientAccounts", "clientAccounts", "master"],
   ["users", "users", "master"],
-  ["balances", "balances"],
   ["settings", "settings", "master"],
 ];
 
@@ -561,11 +574,28 @@ function clearSession() {
   state.userId = "";
   state.data = null;
   state.view = "dashboard";
+  state.filters = {};
+  state.dashboardFilters = {};
+  state.lastActionableIds = new Set();
+  state.actionableBaselineReady = false;
+  stopAutoRefresh();
   localStorage.removeItem("partnerportal_role");
   localStorage.removeItem("partnerportal_user_id");
 }
 
-async function load() {
+function updateActionableState(notify = true) {
+  const actionables = actionableOperations();
+  const currentIds = new Set(actionables.map((op) => op.id));
+  const newOps = state.actionableBaselineReady
+    ? actionables.filter((op) => !state.lastActionableIds.has(op.id))
+    : actionables;
+  state.lastActionableIds = currentIds;
+  state.actionableBaselineReady = true;
+  if (notify && newOps.length) showActionablePopup(newOps);
+}
+
+async function load(options = {}) {
+  const { render = true, notify = true } = options;
   state.data = await api("/api/bootstrap");
   if (state.data.actor?.id) {
     state.userId = state.data.actor.id;
@@ -573,8 +603,38 @@ async function load() {
     localStorage.setItem("partnerportal_user_id", state.userId);
     localStorage.setItem("partnerportal_role", state.role);
   }
-  renderShell();
-  renderView();
+  updateActionableState(notify);
+  if (render) {
+    renderShell();
+    renderView();
+  } else {
+    renderNotifications();
+  }
+  startAutoRefresh();
+}
+
+function startAutoRefresh() {
+  if (refreshTimer || !state.userId) return;
+  refreshTimer = setInterval(async () => {
+    if (!state.userId) return;
+    try {
+      const hasModal = Boolean(qs("#modalRoot")?.children.length);
+      await load({ render: !hasModal, notify: true });
+      if (hasModal) renderShell();
+    } catch (error) {
+      if (/Sesion|session/i.test(error.message)) {
+        clearSession();
+        showLanding();
+        applyLanguage();
+        toast(error.message || t("sessionExpired"));
+      }
+    }
+  }, REFRESH_INTERVAL_MS);
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = null;
 }
 
 function renderShell() {
@@ -584,11 +644,16 @@ function renderShell() {
   if (state.role !== "magna_admin" && navItems.find(([view, , scope]) => view === state.view && scope === "master")) {
     state.view = "dashboard";
   }
+  const actionableCount = actionableOperations().length;
   qs("#nav").innerHTML = navItems
     .filter(([, , scope]) => scope !== "master" || state.role === "magna_admin")
-    .map(([view, label]) => `<button class="nav-item ${state.view === view ? "active" : ""}" data-nav="${view}" type="button">${t(label)}</button>`)
+    .map(([view, label]) => {
+      const badge = view === "approvals" && actionableCount ? `<b>${actionableCount}</b>` : "";
+      return `<button class="nav-item ${state.view === view ? "active" : ""}" data-nav="${view}" type="button"><span>${t(label)}</span>${badge}</button>`;
+    })
     .join("");
   qs("#viewTitle").textContent = t(state.view);
+  renderNotifications();
 }
 
 function openDrawer() {
@@ -617,7 +682,6 @@ function renderView() {
     accounts: renderAccountsBeneficiaries,
     clientAccounts: renderClientAccounts,
     users: renderUsers,
-    balances: renderBalances,
     settings: renderSettings,
   };
   qs("#viewBody").innerHTML = "";
@@ -657,11 +721,57 @@ function dateRangeForPreset(preset) {
   return range ? { from: localDateString(range[0]), to: localDateString(range[1]) } : null;
 }
 
+function dateOptions() {
+  return [
+    ["", t("allDates")],
+    ["today", t("today")],
+    ["yesterday", t("yesterday")],
+    ["this_week", t("thisWeek")],
+    ["previous_week", t("previousWeek")],
+    ["last_7_days", t("last7Days")],
+    ["last_30_days", t("last30Days")],
+    ["previous_month", t("previousMonth")],
+    ["last_3_months", t("last3Months")],
+    ["last_12_months", t("last12Months")],
+    ["custom", t("customRange")],
+  ];
+}
+
+function selectedDateRange(filters) {
+  const presetRange = filters.date_preset && filters.date_preset !== "custom" ? dateRangeForPreset(filters.date_preset) : null;
+  return { from: presetRange?.from || filters.date_from, to: presetRange?.to || filters.date_to };
+}
+
+function dateFilterMarkup(filters, attributeName = "data-dashboard-filter") {
+  const datePreset = filters.date_preset || "";
+  return `
+    <div class="toolbar dashboard-filter-bar">
+      <div class="filter-field date-filter">
+        <span>${t("dateFilter")}</span>
+        <select ${attributeName}="date_preset">
+          ${dateOptions().map(([value, label]) => `<option value="${value}" ${datePreset === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+        <div class="custom-date-range ${datePreset === "custom" ? "" : "hidden"}">
+          <input ${attributeName}="date_from" type="date" value="${filters.date_from || ""}" />
+          <input ${attributeName}="date_to" type="date" value="${filters.date_to || ""}" />
+        </div>
+      </div>
+      <button class="subtle clear-filters" data-clear-dashboard-filters type="button">${t("clearFilters")}</button>
+    </div>
+  `;
+}
+
+function operationsInDateRange(ops, filters) {
+  const { from, to } = selectedDateRange(filters);
+  return ops.filter((op) => {
+    const date = operationDate(op) || op.created_at?.slice(0, 10);
+    return (!from || date >= from) && (!to || date <= to);
+  });
+}
+
 function filteredOperations() {
   const f = state.filters;
-  const presetRange = f.date_preset && f.date_preset !== "custom" ? dateRangeForPreset(f.date_preset) : null;
-  const dateFrom = presetRange?.from || f.date_from;
-  const dateTo = presetRange?.to || f.date_to;
+  const { from: dateFrom, to: dateTo } = selectedDateRange(f);
   const amountCurrency = f.amount_currency || "USD";
   const amountValue = Number(f.amount || 0);
   return state.data.operations.filter((op) => {
@@ -671,6 +781,7 @@ function filteredOperations() {
     const pendingExecution = op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status));
     return (!f.type || op.type === f.type)
       && (!f.status || op.status === f.status)
+      && (!f.actionables || actionableOperations({ operations: [op] }).length)
       && (!f.pending_execution || pendingExecution)
       && (!f.account || account === f.account)
       && (!dateFrom || created >= dateFrom)
@@ -679,12 +790,90 @@ function filteredOperations() {
   });
 }
 
+function actionableOperations(data = state.data) {
+  if (!data?.operations) return [];
+  return data.operations.filter((op) => {
+    if (state.role === "magna_admin") {
+      return ["pending_master", "in_negotiation", "approved", "expired", "rejected"].includes(op.status)
+        || (op.type === "payment" && ["funded", "in_process"].includes(op.status));
+    }
+    return op.status === "rate_pending_approval";
+  });
+}
+
+function actionLabel(op) {
+  if (state.role === "magna_admin") {
+    if (op.status === "pending_master") return t("loadRate");
+    if (op.status === "in_negotiation") return t("loadRate");
+    if (op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status))) return t("closeOperation");
+    if (op.status === "expired") return t("editRate");
+    if (op.status === "rejected") return t("reopen");
+  }
+  if (op.status === "rate_pending_approval") return `${t("approve")} / ${t("reject")}`;
+  return t("view");
+}
+
+function renderNotifications() {
+  const actionables = actionableOperations();
+  const count = actionables.length;
+  const countNode = qs("#notificationCount");
+  const menu = qs("#notificationMenu");
+  const button = qs("#notificationButton");
+  if (!countNode || !menu || !button) return;
+  countNode.textContent = count;
+  countNode.hidden = !count;
+  button.classList.toggle("has-items", Boolean(count));
+  menu.hidden = !state.notificationOpen;
+  menu.innerHTML = `
+    <header>${t("notifications")}</header>
+    <div class="notification-list">
+      ${actionables.slice(0, 8).map((op) => `
+        <button data-notification-op="${op.id}" type="button">
+          <strong>${op.id}</strong>
+          <span>${typeLabel(op.type, op.metadata || {})} · ${op.status}</span>
+          <small>${actionLabel(op)}</small>
+        </button>
+      `).join("") || `<p>${t("noNotifications")}</p>`}
+    </div>
+    ${count ? `<button class="notification-all" data-view-actionables type="button">${t("viewPending")}</button>` : ""}
+  `;
+}
+
+function showActionablePopup(newOps) {
+  const existing = qs("[data-actionable-popup]");
+  if (existing) existing.remove();
+  if (!newOps.length) return;
+  document.body.insertAdjacentHTML("beforeend", `
+    <section class="actionable-popup" data-actionable-popup>
+      <button class="icon-button" data-dismiss-actionable type="button">×</button>
+      <span>${t("actionables")}</span>
+      <strong>${newOps.length} ${t("newActionables")}</strong>
+      <button class="primary" data-view-actionables type="button">${t("viewPending")}</button>
+    </section>
+  `);
+  setTimeout(() => qs("[data-actionable-popup]")?.remove(), 9000);
+}
+
+function openActionablesView() {
+  state.view = "operations";
+  state.filters = { actionables: "1" };
+  state.notificationOpen = false;
+  renderShell();
+  renderView();
+}
+
 function operationStats(ops) {
   const usd = ops.reduce((sum, op) => sum + Number(op.usd_amount || 0), 0);
   const ves = ops.reduce((sum, op) => sum + Number(op.ves_amount || 0), 0);
   const rated = ops.filter((op) => Number(op.rate) && (Math.abs(Number(op.usd_amount)) || Math.abs(Number(op.ves_amount))));
   const weightedRate = rated.reduce((sum, op) => sum + Number(op.rate) * Math.abs(Number(op.usd_amount || 0)), 0);
   const weight = rated.reduce((sum, op) => sum + Math.abs(Number(op.usd_amount || 0)), 0);
+  const buyRated = rated.filter((op) => op.type === "buy_usd");
+  const buyWeight = buyRated.reduce((sum, op) => sum + Math.abs(Number(op.usd_amount || 0)), 0);
+  const buyWeightedRate = buyRated.reduce((sum, op) => sum + Number(op.rate) * Math.abs(Number(op.usd_amount || 0)), 0);
+  const sellRated = rated.filter((op) => op.type === "sell_usd");
+  const sellWeight = sellRated.reduce((sum, op) => sum + Math.abs(Number(op.usd_amount || 0)), 0);
+  const sellWeightedRate = sellRated.reduce((sum, op) => sum + Number(op.rate) * Math.abs(Number(op.usd_amount || 0)), 0);
   const binanceEligible = ops.filter((op) => ["buy_usd", "sell_usd"].includes(op.type) && Number(op.rate));
   const binanceOk = binanceEligible.filter((op) => binanceSnapshot(op)?.within_range === true).length;
   const binanceOkPercent = binanceEligible.length ? (binanceOk / binanceEligible.length) * 100 : null;
@@ -696,7 +885,18 @@ function operationStats(ops) {
     return sum + spread * Math.abs(Number(op.usd_amount || 0));
   }, 0);
   const weightedBinanceSpread = spreadWeight ? weightedSpreadTotal / spreadWeight : null;
-  return { count: ops.length, usd, ves, weighted: weight ? weightedRate / weight : 0, binanceEligible: binanceEligible.length, binanceOk, binanceOkPercent, weightedBinanceSpread };
+  return {
+    count: ops.length,
+    usd,
+    ves,
+    weighted: weight ? weightedRate / weight : 0,
+    buyWeighted: buyWeight ? buyWeightedRate / buyWeight : 0,
+    sellWeighted: sellWeight ? sellWeightedRate / sellWeight : 0,
+    binanceEligible: binanceEligible.length,
+    binanceOk,
+    binanceOkPercent,
+    weightedBinanceSpread,
+  };
 }
 
 function metricCards(ops) {
@@ -707,10 +907,32 @@ function metricCards(ops) {
       <article class="metric-card"><span>${t("operationCount")}</span><strong>${stats.count}</strong></article>
       <article class="metric-card"><span>${t("netUsd")}</span><strong class="${stats.usd < 0 ? "amount-negative" : "amount-positive"}">${money(stats.usd, "USD")}</strong></article>
       <article class="metric-card"><span>${t("netVes")}</span><strong class="${stats.ves < 0 ? "amount-negative" : "amount-positive"}">${money(stats.ves, "VES")}</strong></article>
-      <article class="metric-card"><span>${t("weightedRate")}</span><strong>${stats.weighted ? money(stats.weighted) : "—"}</strong></article>
+      <article class="metric-card rate-metric">
+        <span>${t("weightedRate")}</span>
+        <strong>${stats.weighted ? money(stats.weighted) : "—"}</strong>
+        <div class="mini-rate-pills">
+          <em class="buy">${t("buyRate")}: ${stats.buyWeighted ? money(stats.buyWeighted) : "—"}</em>
+          <em class="sell">${t("sellRate")}: ${stats.sellWeighted ? money(stats.sellWeighted) : "—"}</em>
+        </div>
+      </article>
       <article class="metric-card"><span>${t("binanceOkRate")}</span><strong class="${stats.binanceOkPercent !== null && stats.binanceOkPercent < 95 ? "amount-negative" : "amount-positive"}">${stats.binanceOkPercent === null ? "—" : `${money(stats.binanceOkPercent)}%`}</strong><div class="muted">${stats.binanceOk}/${stats.binanceEligible} ${t("operations")}</div></article>
       <article class="metric-card"><span>${t("weightedBinanceSpread")}</span><strong class="${spreadClass}">${stats.weightedBinanceSpread === null ? "—" : `${money(stats.weightedBinanceSpread)}%`}</strong></article>
     </div>
+  `;
+}
+
+function balanceCards() {
+  const accounts = state.data.accounts.filter((account) => account.status !== "deleted");
+  return `
+    <section class="balance-strip">
+      ${accounts.map((account) => `
+        <article class="metric-card balance-card">
+          <span>${account.owner === "client" ? t("client") : t("magna")} · ${account.currency}</span>
+          <strong>${money(account.balance, account.currency)}</strong>
+          <div class="muted">${account.name}</div>
+        </article>
+      `).join("") || `<p class="muted">${t("noAccounts")}</p>`}
+    </section>
   `;
 }
 
@@ -839,8 +1061,8 @@ function usdFlowChart(rows) {
         <div class="bar-row">
           <span>${compactDate(row.date)}</span>
           <div class="bar-track">
-            <i class="bar positive" style="width:${Math.max((row.buyUsd / maxValue) * 48, row.buyUsd ? 3 : 0)}%"></i>
-            <i class="bar negative" style="width:${Math.max((row.sellUsd / maxValue) * 48, row.sellUsd ? 3 : 0)}%"></i>
+            <i class="bar positive" style="width:${Math.max((row.buyUsd / maxValue) * 48, row.buyUsd ? 6 : 0)}%">${row.buyUsd ? `<em>${t("buyUsd")}</em>` : ""}</i>
+            <i class="bar negative" style="width:${Math.max((row.sellUsd / maxValue) * 48, row.sellUsd ? 6 : 0)}%">${row.sellUsd ? `<em>${t("sellUsd")}</em>` : ""}</i>
           </div>
           <strong>${money(row.buyUsd, "USD")} / ${money(row.sellUsd, "USD")}</strong>
         </div>
@@ -863,6 +1085,20 @@ function ratePolyline(points, values, minRate, maxRate) {
   }).filter(Boolean).join(" ");
 }
 
+function rateCircles(points, values, minRate, maxRate, className) {
+  const width = 620;
+  const height = 220;
+  const pad = 24;
+  const rateRange = maxRate - minRate || 1;
+  return points.map((_, index) => {
+    const value = values[index];
+    if (!value) return "";
+    const x = pad + (index * (width - pad * 2)) / Math.max(points.length - 1, 1);
+    const y = height - pad - ((value - minRate) / rateRange) * (height - pad * 2);
+    return `<circle class="point ${className}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5"><title>${money(value)}</title></circle>`;
+  }).join("");
+}
+
 function ratesChart(rows) {
   const chronological = [...rows].reverse();
   const values = chronological.flatMap((row) => [row.buyRate, row.sellRate, row.binanceRate]).filter(Boolean);
@@ -872,6 +1108,9 @@ function ratesChart(rows) {
   const buyPoints = ratePolyline(chronological, chronological.map((row) => row.buyRate), minRate, maxRate);
   const sellPoints = ratePolyline(chronological, chronological.map((row) => row.sellRate), minRate, maxRate);
   const binancePoints = ratePolyline(chronological, chronological.map((row) => row.binanceRate), minRate, maxRate);
+  const buyValues = chronological.map((row) => row.buyRate);
+  const sellValues = chronological.map((row) => row.sellRate);
+  const binanceValues = chronological.map((row) => row.binanceRate);
   return `
     <div class="rate-chart">
       <svg viewBox="0 0 620 220" role="img" aria-label="${t("dailyRates")}">
@@ -879,6 +1118,9 @@ function ratesChart(rows) {
         <polyline class="line buy" points="${buyPoints}"></polyline>
         <polyline class="line sell" points="${sellPoints}"></polyline>
         <polyline class="line binance" points="${binancePoints}"></polyline>
+        ${rateCircles(chronological, buyValues, minRate, maxRate, "buy")}
+        ${rateCircles(chronological, sellValues, minRate, maxRate, "sell")}
+        ${rateCircles(chronological, binanceValues, minRate, maxRate, "binance")}
         ${chronological.map((row, index) => {
           const x = 24 + (index * (620 - 48)) / Math.max(chronological.length - 1, 1);
           return `<text x="${x.toFixed(1)}" y="214">${compactDate(row.date)}</text>`;
@@ -894,11 +1136,16 @@ function ratesChart(rows) {
 }
 
 function renderDashboard() {
-  const ops = state.data.operations;
+  const ops = operationsInDateRange(state.data.operations, state.dashboardFilters);
   const rows = dailyDashboardRows(ops);
   qs("#viewBody").innerHTML = `
+    <section class="panel dashboard-filter-panel">
+      <div class="panel-header"><h2>${t("dashboard")}</h2></div>
+      ${dateFilterMarkup(state.dashboardFilters)}
+    </section>
+    ${balanceCards()}
     ${metricCards(ops)}
-    ${pendingDashboardCards(ops)}
+    ${pendingDashboardCards(state.data.operations)}
     <section class="grid-2 dashboard-visuals">
       <article class="panel">
         <div class="panel-header"><h2>${t("usdFlow")}</h2></div>
@@ -956,24 +1203,12 @@ function renderOperations() {
   const statuses = [...new Set(state.data.operations.map((op) => op.status))].sort();
   const datePreset = state.filters.date_preset || "";
   const amountCurrency = state.filters.amount_currency || "USD";
-  const dateOptions = [
-    ["", t("allDates")],
-    ["today", t("today")],
-    ["yesterday", t("yesterday")],
-    ["this_week", t("thisWeek")],
-    ["previous_week", t("previousWeek")],
-    ["last_7_days", t("last7Days")],
-    ["last_30_days", t("last30Days")],
-    ["previous_month", t("previousMonth")],
-    ["last_3_months", t("last3Months")],
-    ["last_12_months", t("last12Months")],
-    ["custom", t("customRange")],
-  ];
   qs("#viewBody").innerHTML = `
     ${metricCards(ops)}
     <section class="panel">
       <div class="panel-header">
         <h2>${t("operationsLedger")}</h2>
+        ${state.filters.actionables ? `<span class="filter-chip">${t("actionables")}</span>` : ""}
         ${state.filters.pending_execution ? `<span class="filter-chip">${t("pendingExecution")}</span>` : ""}
       </div>
       <div class="toolbar operation-filters">
@@ -993,7 +1228,7 @@ function renderOperations() {
         <div class="filter-field date-filter">
           <span>${t("dateFilter")}</span>
           <select data-filter="date_preset">
-            ${dateOptions.map(([value, label]) => `<option value="${value}" ${datePreset === value ? "selected" : ""}>${label}</option>`).join("")}
+            ${dateOptions().map(([value, label]) => `<option value="${value}" ${datePreset === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
           <div class="custom-date-range ${datePreset === "custom" ? "" : "hidden"}">
             <input data-filter="date_from" type="date" value="${state.filters.date_from || ""}" />
@@ -1181,20 +1416,6 @@ function categoriesTable() {
           <tr><td><strong>${cat.name}</strong></td><td>${cat.kind}</td><td>${cat.status}</td><td class="row-actions"><button class="subtle" data-edit-category="${cat.id}" type="button">${t("edit")}</button><button class="danger" data-delete-category="${cat.id}" type="button">${t("delete")}</button></td></tr>
         `).join("")}</tbody>
       </table>
-    </div>
-  `;
-}
-
-function renderBalances() {
-  qs("#viewBody").innerHTML = `
-    <div class="summary-grid">
-      ${state.data.accounts.map((account) => `
-        <article class="metric-card">
-          <span>${account.owner === "client" ? t("client") : t("magna")} · ${account.currency}</span>
-          <strong>${money(account.balance, account.currency)}</strong>
-          <div class="muted">${account.name}</div>
-        </article>
-      `).join("")}
     </div>
   `;
 }
@@ -1787,6 +2008,27 @@ document.addEventListener("click", async (event) => {
       renderView();
     }
   }
+  if (event.target.closest("#notificationButton")) {
+    state.notificationOpen = !state.notificationOpen;
+    renderNotifications();
+    return;
+  }
+  if (event.target.closest("[data-dismiss-actionable]")) {
+    event.target.closest("[data-actionable-popup]")?.remove();
+    return;
+  }
+  if (event.target.closest("[data-view-actionables]")) {
+    qs("[data-actionable-popup]")?.remove();
+    openActionablesView();
+    return;
+  }
+  const notificationOp = event.target.closest("[data-notification-op]");
+  if (notificationOp) {
+    state.notificationOpen = false;
+    renderNotifications();
+    openOperationDetail(notificationOp.dataset.notificationOp);
+    return;
+  }
   if (event.target.closest("[data-action='open-treasury']") && state.role !== "magna_admin") openTreasuryModal();
   if (event.target.closest("[data-action='new-account']")) openAccountModal(event.target.closest("[data-action]").dataset.owner);
   if (event.target.closest("[data-action='new-beneficiary']")) openBeneficiaryModal();
@@ -1795,6 +2037,10 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("[data-clear-filters]")) {
     state.filters = {};
     renderOperations();
+  }
+  if (event.target.closest("[data-clear-dashboard-filters]")) {
+    state.dashboardFilters = {};
+    renderDashboard();
   }
   const dashboardShortcut = event.target.closest("[data-dashboard-shortcut]");
   if (dashboardShortcut) {
@@ -1868,6 +2114,11 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const dashboardFilter = event.target.closest("[data-dashboard-filter]");
+  if (dashboardFilter) {
+    state.dashboardFilters[dashboardFilter.dataset.dashboardFilter] = dashboardFilter.value;
+    renderDashboard();
+  }
   const filter = event.target.closest("[data-filter]");
   if (filter) {
     state.filters[filter.dataset.filter] = filter.value;
@@ -1897,6 +2148,11 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  const dashboardFilter = event.target.closest("[data-dashboard-filter]");
+  if (dashboardFilter) {
+    state.dashboardFilters[dashboardFilter.dataset.dashboardFilter] = dashboardFilter.value;
+    renderDashboard();
+  }
   const filter = event.target.closest("[data-filter]");
   if (filter) {
     state.filters[filter.dataset.filter] = filter.value;
