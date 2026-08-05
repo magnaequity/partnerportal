@@ -70,6 +70,7 @@ const labels = {
     sellRate: "Tasa venta",
     binanceRate: "Tasa Binance",
     partnerPayments: "Pagos a partners",
+    providerPayments: "Pagos a proveedores",
     treasuryRequests: "Solicitudes de tesorería",
     approvalsInbox: "Bandeja de aprobaciones",
     approvalsSubtitle: "Tasas, negociación y ejecución",
@@ -279,6 +280,7 @@ const labels = {
     sellRate: "Sell rate",
     binanceRate: "Binance rate",
     partnerPayments: "Partner payments",
+    providerPayments: "Provider payments",
     treasuryRequests: "Treasury requests",
     approvalsInbox: "Approvals inbox",
     approvalsSubtitle: "Rates, negotiation and execution",
@@ -1063,6 +1065,7 @@ function dashboardRowsByPeriod(ops, granularity = "day", limit = 10) {
         buyUsd: 0,
         sellUsd: 0,
         partnerPayments: 0,
+        providerPayments: 0,
         buyRateTotal: 0,
         buyRateWeight: 0,
         sellRateTotal: 0,
@@ -1084,8 +1087,10 @@ function dashboardRowsByPeriod(ops, granularity = "day", limit = 10) {
       period.sellRateTotal += Number(op.rate || 0) * absUsd;
       period.sellRateWeight += absUsd;
     }
-    if (op.type === "payment" && op.status === "completed" && op.metadata?.payment_type === "partner") {
-      period.partnerPayments += Math.abs(Number(op.ves_amount || op.final_amount || op.requested_amount || 0));
+    if (op.type === "payment" && op.status === "completed") {
+      const paymentAmount = Math.abs(Number(op.ves_amount || op.final_amount || op.requested_amount || 0));
+      if (op.metadata?.payment_type === "partner") period.partnerPayments += paymentAmount;
+      if (op.metadata?.payment_type === "provider") period.providerPayments += paymentAmount;
     }
     if (["buy_usd", "sell_usd"].includes(op.type) && Number(op.binance_rate) && absUsd) {
       period.binanceTotal += Number(op.binance_rate) * absUsd;
@@ -1113,7 +1118,7 @@ function compactDate(date) {
 
 function dailySummaryTable(rows) {
   return `
-    <div class="table-wrap compact-table">
+    <div class="table-wrap compact-table dashboard-summary-table">
       <table>
         <thead>
           <tr>
@@ -1122,6 +1127,7 @@ function dailySummaryTable(rows) {
             <th>${t("buyUsd")}</th>
             <th>${t("sellUsd")}</th>
             <th>${t("partnerPayments")}</th>
+            <th>${t("providerPayments")}</th>
             <th>${t("buyRate")}</th>
             <th>${t("sellRate")}</th>
           </tr>
@@ -1134,10 +1140,11 @@ function dailySummaryTable(rows) {
               <td class="amount-positive">${money(row.buyUsd, "USD")}</td>
               <td class="amount-negative">${money(row.sellUsd, "USD")}</td>
               <td>${money(row.partnerPayments, "VES")}</td>
+              <td>${money(row.providerPayments, "VES")}</td>
               <td>${row.buyRate ? money(row.buyRate) : "—"}</td>
               <td>${row.sellRate ? money(row.sellRate) : "—"}</td>
             </tr>
-          `).join("") || `<tr><td colspan="7" class="muted">${t("noOperations")}</td></tr>`}
+          `).join("") || `<tr><td colspan="8" class="muted">${t("noOperations")}</td></tr>`}
         </tbody>
       </table>
     </div>
