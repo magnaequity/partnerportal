@@ -7,6 +7,7 @@ const state = {
   data: null,
   filters: {},
   dashboardFilters: {},
+  dashboardGranularity: localStorage.getItem("partnerportal_dashboard_granularity") || "day",
   lastActionableIds: new Set(),
   actionableBaselineReady: false,
   notificationOpen: false,
@@ -43,6 +44,13 @@ const labels = {
     darkMode: "Modo oscuro",
     recentActivity: "Actividad reciente",
     dailySummary: "Resumen diario",
+    weeklySummary: "Resumen semanal",
+    monthlySummary: "Resumen mensual",
+    granularity: "Granularidad",
+    dailyGranularity: "Diario",
+    weeklyGranularity: "Semanal",
+    monthlyGranularity: "Mensual",
+    weekOf: "Semana",
     currentBalances: "Saldos actuales",
     operationalSummary: "Resumen operativo",
     usdFlow: "Compras y ventas USD",
@@ -245,6 +253,13 @@ const labels = {
     darkMode: "Dark mode",
     recentActivity: "Recent activity",
     dailySummary: "Daily summary",
+    weeklySummary: "Weekly summary",
+    monthlySummary: "Monthly summary",
+    granularity: "Granularity",
+    dailyGranularity: "Daily",
+    weeklyGranularity: "Weekly",
+    monthlyGranularity: "Monthly",
+    weekOf: "Week of",
     currentBalances: "Current balances",
     operationalSummary: "Operating summary",
     usdFlow: "USD buys and sells",
@@ -997,14 +1012,53 @@ function operationDate(op) {
   return (op.executed_at || op.created_at || "").slice(0, 10);
 }
 
-function dailyDashboardRows(ops, limit = 10) {
-  const days = new Map();
+function periodStart(date, granularity) {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (granularity === "month") return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-01`;
+  if (granularity === "week") {
+    const day = parsed.getDay() || 7;
+    parsed.setDate(parsed.getDate() - day + 1);
+  }
+  return localDateString(parsed);
+}
+
+function periodLabel(date, granularity) {
+  if (granularity === "month") {
+    return new Date(`${date}T00:00:00`).toLocaleDateString(state.lang === "es" ? "es-VE" : "en-US", { month: "short", year: "numeric" });
+  }
+  if (granularity === "week") return `${t("weekOf")} ${compactDate(date)}`;
+  return compactDate(date);
+}
+
+function summaryTitleKey() {
+  if (state.dashboardGranularity === "week") return "weeklySummary";
+  if (state.dashboardGranularity === "month") return "monthlySummary";
+  return "dailySummary";
+}
+
+function dashboardGranularityControl() {
+  return `
+    <label class="granularity-control">
+      <span>${t("granularity")}</span>
+      <select data-dashboard-granularity>
+        <option value="day" ${state.dashboardGranularity === "day" ? "selected" : ""}>${t("dailyGranularity")}</option>
+        <option value="week" ${state.dashboardGranularity === "week" ? "selected" : ""}>${t("weeklyGranularity")}</option>
+        <option value="month" ${state.dashboardGranularity === "month" ? "selected" : ""}>${t("monthlyGranularity")}</option>
+      </select>
+    </label>
+  `;
+}
+
+function dashboardRowsByPeriod(ops, granularity = "day", limit = 10) {
+  const periods = new Map();
   ops.forEach((op) => {
     const date = operationDate(op);
     if (!date) return;
-    if (!days.has(date)) {
-      days.set(date, {
-        date,
+    const periodDate = periodStart(date, granularity);
+    if (!periods.has(periodDate)) {
+      periods.set(periodDate, {
+        date: periodDate,
+        label: periodLabel(periodDate, granularity),
         count: 0,
         buyUsd: 0,
         sellUsd: 0,
@@ -1017,36 +1071,40 @@ function dailyDashboardRows(ops, limit = 10) {
         binanceWeight: 0,
       });
     }
-    const day = days.get(date);
+    const period = periods.get(periodDate);
     const absUsd = Math.abs(Number(op.usd_amount || 0));
-    day.count += 1;
+    period.count += 1;
     if (op.type === "buy_usd") {
-      day.buyUsd += absUsd;
-      day.buyRateTotal += Number(op.rate || 0) * absUsd;
-      day.buyRateWeight += absUsd;
+      period.buyUsd += absUsd;
+      period.buyRateTotal += Number(op.rate || 0) * absUsd;
+      period.buyRateWeight += absUsd;
     }
     if (op.type === "sell_usd") {
-      day.sellUsd += absUsd;
-      day.sellRateTotal += Number(op.rate || 0) * absUsd;
-      day.sellRateWeight += absUsd;
+      period.sellUsd += absUsd;
+      period.sellRateTotal += Number(op.rate || 0) * absUsd;
+      period.sellRateWeight += absUsd;
     }
     if (op.type === "payment" && op.status === "completed" && op.metadata?.payment_type === "partner") {
-      day.partnerPayments += Math.abs(Number(op.ves_amount || op.final_amount || op.requested_amount || 0));
+      period.partnerPayments += Math.abs(Number(op.ves_amount || op.final_amount || op.requested_amount || 0));
     }
     if (["buy_usd", "sell_usd"].includes(op.type) && Number(op.binance_rate) && absUsd) {
-      day.binanceTotal += Number(op.binance_rate) * absUsd;
-      day.binanceWeight += absUsd;
+      period.binanceTotal += Number(op.binance_rate) * absUsd;
+      period.binanceWeight += absUsd;
     }
   });
-  return [...days.values()]
+  return [...periods.values()]
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, limit)
-    .map((day) => ({
-      ...day,
-      buyRate: weightedAverage(day.buyRateTotal, day.buyRateWeight),
-      sellRate: weightedAverage(day.sellRateTotal, day.sellRateWeight),
-      binanceRate: weightedAverage(day.binanceTotal, day.binanceWeight),
+    .map((period) => ({
+      ...period,
+      buyRate: weightedAverage(period.buyRateTotal, period.buyRateWeight),
+      sellRate: weightedAverage(period.sellRateTotal, period.sellRateWeight),
+      binanceRate: weightedAverage(period.binanceTotal, period.binanceWeight),
     }));
+}
+
+function dailyDashboardRows(ops, limit = 10) {
+  return dashboardRowsByPeriod(ops, "day", limit);
 }
 
 function compactDate(date) {
@@ -1071,7 +1129,7 @@ function dailySummaryTable(rows) {
         <tbody>
           ${rows.map((row) => `
             <tr>
-              <td><strong>${compactDate(row.date)}</strong></td>
+              <td><strong>${row.label || compactDate(row.date)}</strong></td>
               <td>${row.count}</td>
               <td class="amount-positive">${money(row.buyUsd, "USD")}</td>
               <td class="amount-negative">${money(row.sellUsd, "USD")}</td>
@@ -1180,6 +1238,7 @@ function ratesChart(rows) {
 function renderDashboard() {
   const ops = operationsInDateRange(state.data.operations, state.dashboardFilters);
   const rows = dailyDashboardRows(ops);
+  const summaryRows = dashboardRowsByPeriod(ops, state.dashboardGranularity, 12);
   qs("#viewBody").innerHTML = `
     ${dashboardSection("currentBalances", balanceCards())}
     ${dashboardSection("operationalSummary", `${metricCards(ops)}${pendingDashboardCards(state.data.operations)}`)}
@@ -1194,8 +1253,11 @@ function renderDashboard() {
       </article>
     </section>
     <section class="panel">
-      <div class="panel-header"><h2>${t("dailySummary")}</h2></div>
-      ${dailySummaryTable(rows)}
+      <div class="panel-header dashboard-summary-header">
+        <h2>${t(summaryTitleKey())}</h2>
+        ${dashboardGranularityControl()}
+      </div>
+      ${dailySummaryTable(summaryRows)}
     </section>
     <section class="panel">
       <div class="panel-header"><h2>${t("recentActivity")}</h2></div>
@@ -2158,6 +2220,13 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const dashboardGranularity = event.target.closest("[data-dashboard-granularity]");
+  if (dashboardGranularity) {
+    state.dashboardGranularity = dashboardGranularity.value;
+    localStorage.setItem("partnerportal_dashboard_granularity", state.dashboardGranularity);
+    renderDashboard();
+    return;
+  }
   const dashboardFilter = event.target.closest("[data-dashboard-filter]");
   if (dashboardFilter) {
     state.dashboardFilters[dashboardFilter.dataset.dashboardFilter] = dashboardFilter.value;

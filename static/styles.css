@@ -629,6 +629,31 @@ input[readonly] {
   font-size: 1rem;
 }
 
+.dashboard-summary-header {
+  align-items: center;
+}
+
+.granularity-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.granularity-control span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.granularity-control select {
+  width: 136px;
+  height: 38px;
+  padding: 8px 30px 8px 12px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -923,7 +948,7 @@ input[readonly] {
 .bar-axis-labels,
 .bar-row {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) auto;
+  grid-template-columns: 76px minmax(0, 1fr) 210px;
   align-items: center;
   gap: 10px;
 }
@@ -933,14 +958,14 @@ input[readonly] {
 }
 
 .bar-axis-labels > div {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: center;
-  gap: 10px;
+  position: relative;
+  height: 16px;
 }
 
 .bar-axis-labels b {
-  display: block;
+  position: absolute;
+  top: 0;
+  width: calc(50% - 8px);
   font-size: 0.7rem;
   font-weight: 900;
   line-height: 1;
@@ -948,12 +973,15 @@ input[readonly] {
 }
 
 .bar-axis-labels .sell {
+  left: 0;
   color: var(--red);
   text-align: right;
 }
 
 .bar-axis-labels .buy {
+  right: 0;
   color: var(--green);
+  text-align: left;
 }
 
 .bar-row span,
@@ -961,6 +989,10 @@ input[readonly] {
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 800;
+}
+
+.bar-row strong {
+  justify-self: start;
 }
 
 .bar-track {
@@ -1667,6 +1699,20 @@ tbody tr:hover {
 
   .notification-menu {
     right: -84px;
+  }
+
+  .bar-axis-labels,
+  .bar-row {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .bar-axis-labels > span:last-child {
+    display: none;
+  }
+
+  .bar-row strong {
+    grid-column: 2;
+    justify-self: end;
   }
 
   .actionable-popup {
