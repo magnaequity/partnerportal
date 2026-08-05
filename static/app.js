@@ -456,10 +456,11 @@ function binanceRangeFor(rate, reference) {
   const rangePct = Number(state.data?.settings?.binance_range_percent || 1);
   const ref = Number(reference || 0);
   const operationRate = Number(rate || 0);
-  if (!ref || !operationRate) return null;
+  if (!ref) return null;
   const lower = ref * (1 - rangePct / 100);
   const upper = ref * (1 + rangePct / 100);
-  return { lower, upper, withinRange: operationRate >= lower && operationRate <= upper, rangePct };
+  const withinRange = operationRate ? operationRate >= lower && operationRate <= upper : null;
+  return { lower, upper, withinRange, rangePct };
 }
 
 function binancePill(op) {
@@ -1650,9 +1651,12 @@ function updateRateRangePreview(form) {
     node.innerHTML = `<span class="muted">${t("rateRanges")}: —</span>`;
     return;
   }
+  const rangePill = range.withinRange === null
+    ? ""
+    : `<span class="range-pill ${range.withinRange ? "ok" : "warning"}">${range.withinRange ? t("withinRange") : t("outsideRange")}</span>`;
   node.innerHTML = `
     <span>${t("rateRanges")}: ${money(range.lower)} - ${money(range.upper)}</span>
-    <span class="range-pill ${range.withinRange ? "ok" : "warning"}">${range.withinRange ? t("withinRange") : t("outsideRange")}</span>
+    ${rangePill}
   `;
 }
 
