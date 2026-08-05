@@ -16,6 +16,21 @@
   --soft-shadow: 0 14px 34px rgba(5, 43, 56, 0.08);
 }
 
+body.dark-mode {
+  --ink: #e9f7fb;
+  --ink-2: #b7e6f2;
+  --muted: #8fa7b2;
+  --line: rgba(177, 229, 241, 0.16);
+  --panel: rgba(8, 31, 42, 0.86);
+  --canvas: #071d27;
+  --nav: #031923;
+  --green: #4fd194;
+  --red: #ff6975;
+  --amber: #e4bd61;
+  --shadow: 0 26px 80px rgba(0, 0, 0, 0.46);
+  --soft-shadow: 0 18px 44px rgba(0, 0, 0, 0.26);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -29,6 +44,13 @@ body {
     radial-gradient(circle at 90% 20%, rgba(214, 180, 106, 0.18), transparent 30%),
     linear-gradient(145deg, #eef7fa 0%, #f8fbfc 52%, #ffffff 100%);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body.dark-mode {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(88, 198, 228, 0.14), transparent 32%),
+    radial-gradient(circle at 90% 12%, rgba(214, 180, 106, 0.1), transparent 28%),
+    linear-gradient(145deg, #061822 0%, #082634 52%, #041118 100%);
 }
 
 button,
@@ -135,6 +157,8 @@ button {
   bottom: 18px;
   width: 314px;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
   padding: 18px;
   border-radius: 22px;
   color: white;
@@ -176,8 +200,12 @@ button {
 
 .nav {
   display: grid;
+  flex: 1;
   gap: 8px;
   margin-top: 20px;
+  margin-bottom: 14px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .nav-item {
@@ -213,10 +241,7 @@ button {
 }
 
 .drawer-controls {
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 18px;
+  margin-top: auto;
 }
 
 .session-card {
@@ -226,6 +251,59 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  color: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.theme-toggle strong {
+  font-size: 0.86rem;
+}
+
+.switch-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.switch-track i {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: white;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.theme-toggle.active {
+  border-color: rgba(88, 198, 228, 0.38);
+  background: rgba(88, 198, 228, 0.13);
+}
+
+.theme-toggle.active .switch-track {
+  background: linear-gradient(135deg, var(--cyan-2), var(--gold));
+}
+
+.theme-toggle.active .switch-track i {
+  background: #052b38;
+  transform: translateX(18px);
 }
 
 .session-card span {
@@ -306,6 +384,48 @@ input[readonly] {
 .top-actions {
   position: relative;
   gap: 10px;
+}
+
+.top-date-filter:empty {
+  display: none;
+}
+
+.topbar-date-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-date-bar .filter-field {
+  position: relative;
+  display: block;
+}
+
+.topbar-date-bar .filter-field > span {
+  display: none;
+}
+
+.topbar-date-bar select {
+  width: 188px;
+  height: 44px;
+  padding-right: 34px;
+}
+
+.topbar-date-bar .custom-date-range {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 34;
+  width: min(340px, calc(100vw - 36px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.topbar-date-bar .clear-filters {
+  align-self: center;
 }
 
 .notification-wrap {
@@ -468,6 +588,7 @@ input[readonly] {
   padding: 10px 14px;
   border-radius: 999px;
   border: 1px solid var(--line);
+  white-space: nowrap;
   background: rgba(255, 255, 255, 0.78);
 }
 
@@ -585,6 +706,18 @@ input[readonly] {
   margin-top: 7px;
   font-size: 1.06rem;
   line-height: 1.12;
+}
+
+.summary-grid .metric-card:not(.rate-metric) strong {
+  font-size: clamp(1.28rem, 1.5vw, 1.58rem);
+}
+
+.summary-grid .metric-card:not(.rate-metric) .muted {
+  font-size: 0.88rem;
+}
+
+.rate-metric strong {
+  font-size: 1.08rem;
 }
 
 .mini-rate-pills {
@@ -717,6 +850,11 @@ input[readonly] {
   gap: 10px;
 }
 
+.toolbar.topbar-date-bar {
+  display: flex;
+  grid-template-columns: none;
+}
+
 .operation-filters {
   align-items: end;
   grid-template-columns: minmax(128px, 0.85fr) minmax(140px, 0.95fr) minmax(240px, 1.45fr) minmax(220px, 1.2fr) minmax(170px, 1fr) auto;
@@ -782,11 +920,40 @@ input[readonly] {
   gap: 12px;
 }
 
+.bar-axis-labels,
 .bar-row {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+.bar-axis-labels {
+  margin-bottom: -3px;
+}
+
+.bar-axis-labels > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-axis-labels b {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.bar-axis-labels .sell {
+  color: var(--red);
+  text-align: right;
+}
+
+.bar-axis-labels .buy {
+  color: var(--green);
 }
 
 .bar-row span,
@@ -802,6 +969,79 @@ input[readonly] {
   border-radius: 999px;
   background: rgba(7, 37, 51, 0.06);
   overflow: hidden;
+}
+
+body.dark-mode input,
+body.dark-mode select,
+body.dark-mode textarea,
+body.dark-mode .menu-button,
+body.dark-mode .icon-button,
+body.dark-mode .ghost-button,
+body.dark-mode .subtle,
+body.dark-mode .actor-pill {
+  color: var(--ink);
+  border-color: var(--line);
+  background: rgba(8, 31, 42, 0.78);
+}
+
+body.dark-mode input[readonly] {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.dark-mode .drawer {
+  background:
+    linear-gradient(180deg, rgba(3, 19, 27, 0.98), rgba(5, 37, 49, 0.95)),
+    radial-gradient(circle at 20% 10%, rgba(88, 198, 228, 0.18), transparent 36%);
+}
+
+body.dark-mode .panel,
+body.dark-mode .metric-card,
+body.dark-mode .table-wrap,
+body.dark-mode .notification-menu,
+body.dark-mode .modal,
+body.dark-mode .detail-item,
+body.dark-mode .readonly-amount {
+  background: var(--panel);
+}
+
+body.dark-mode .metric-card::after {
+  background: linear-gradient(135deg, rgba(88, 198, 228, 0.12), rgba(214, 180, 106, 0.1));
+}
+
+body.dark-mode .pending-card,
+body.dark-mode .notification-list button {
+  background:
+    linear-gradient(135deg, rgba(10, 40, 52, 0.92), rgba(6, 28, 38, 0.9)),
+    var(--panel);
+}
+
+body.dark-mode th {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+body.dark-mode tbody tr:hover {
+  background: rgba(88, 198, 228, 0.1);
+}
+
+body.dark-mode .bar-track,
+body.dark-mode .rate-chart svg {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.dark-mode .bar-track::before,
+body.dark-mode .rate-chart line {
+  background: rgba(177, 229, 241, 0.18);
+  stroke: rgba(177, 229, 241, 0.18);
+}
+
+body.dark-mode .rate-chart .point {
+  stroke: #071d27;
+}
+
+body.dark-mode .file-preview-frame,
+body.dark-mode .file-preview-image {
+  background: #0a202b;
 }
 
 .bar-track::before {

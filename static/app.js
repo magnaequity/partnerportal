@@ -2,6 +2,7 @@ const state = {
   role: localStorage.getItem("partnerportal_role") || "",
   userId: localStorage.getItem("partnerportal_user_id") || "",
   lang: localStorage.getItem("partnerportal_lang") || "es",
+  theme: localStorage.getItem("partnerportal_theme") || "light",
   view: "dashboard",
   data: null,
   filters: {},
@@ -39,6 +40,7 @@ const labels = {
     clientAccounts: "Cuentas Cliente",
     users: "User Management",
     settings: "Configuración",
+    darkMode: "Modo oscuro",
     recentActivity: "Actividad reciente",
     dailySummary: "Resumen diario",
     currentBalances: "Saldos actuales",
@@ -240,6 +242,7 @@ const labels = {
     clientAccounts: "Client Accounts",
     users: "User Management",
     settings: "Settings",
+    darkMode: "Dark mode",
     recentActivity: "Recent activity",
     dailySummary: "Daily summary",
     currentBalances: "Current balances",
@@ -460,6 +463,17 @@ function applyLanguage() {
   const landingLang = qs("#landingLang");
   if (languageToggle) languageToggle.textContent = toggleLabel;
   if (landingLang) landingLang.textContent = toggleLabel;
+  const themeLabel = qs("[data-theme-toggle-label]");
+  if (themeLabel) themeLabel.textContent = t("darkMode");
+}
+
+function applyTheme() {
+  document.body.classList.toggle("dark-mode", state.theme === "dark");
+  const toggle = qs("#themeToggle");
+  if (toggle) {
+    toggle.classList.toggle("active", state.theme === "dark");
+    toggle.setAttribute("aria-pressed", state.theme === "dark" ? "true" : "false");
+  }
 }
 
 function money(value, currency = "") {
@@ -659,7 +673,12 @@ function renderShell() {
     })
     .join("");
   qs("#viewTitle").textContent = t(state.view);
+  const topDateFilter = qs("#topDateFilter");
+  if (topDateFilter) {
+    topDateFilter.innerHTML = state.view === "dashboard" ? dateFilterMarkup(state.dashboardFilters, "data-dashboard-filter", "topbar-date-bar") : "";
+  }
   renderNotifications();
+  applyTheme();
 }
 
 function openDrawer() {
@@ -748,10 +767,10 @@ function selectedDateRange(filters) {
   return { from: presetRange?.from || filters.date_from, to: presetRange?.to || filters.date_to };
 }
 
-function dateFilterMarkup(filters, attributeName = "data-dashboard-filter") {
+function dateFilterMarkup(filters, attributeName = "data-dashboard-filter", className = "dashboard-filter-bar") {
   const datePreset = filters.date_preset || "";
   return `
-    <div class="toolbar dashboard-filter-bar">
+    <div class="toolbar ${className}">
       <div class="filter-field date-filter">
         <span>${t("dateFilter")}</span>
         <select ${attributeName}="date_preset">
@@ -1072,6 +1091,14 @@ function usdFlowChart(rows) {
   const maxValue = Math.max(...chronological.map((row) => Math.max(row.buyUsd, row.sellUsd)), 1);
   return `
     <div class="bar-chart">
+      <div class="bar-axis-labels">
+        <span></span>
+        <div>
+          <b class="sell">${t("sellUsd")}</b>
+          <b class="buy">${t("buyUsd")}</b>
+        </div>
+        <span></span>
+      </div>
       ${chronological.map((row) => `
         <div class="bar-row">
           <span>${compactDate(row.date)}</span>
@@ -1154,15 +1181,11 @@ function renderDashboard() {
   const ops = operationsInDateRange(state.data.operations, state.dashboardFilters);
   const rows = dailyDashboardRows(ops);
   qs("#viewBody").innerHTML = `
-    <section class="panel dashboard-filter-panel">
-      <div class="panel-header"><h2>${t("dashboard")}</h2></div>
-      ${dateFilterMarkup(state.dashboardFilters)}
-    </section>
     ${dashboardSection("currentBalances", balanceCards())}
     ${dashboardSection("operationalSummary", `${metricCards(ops)}${pendingDashboardCards(state.data.operations)}`)}
     <section class="grid-2 dashboard-visuals">
       <article class="panel">
-        <div class="panel-header"><h2>${t("usdFlowTitle")}</h2></div>
+        <div class="panel-header"><h2>${t("usdFlow")}</h2></div>
         ${usdFlowChart(rows)}
       </article>
       <article class="panel">
@@ -2022,6 +2045,12 @@ document.addEventListener("click", async (event) => {
       renderView();
     }
   }
+  if (event.target.closest("#themeToggle")) {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("partnerportal_theme", state.theme);
+    applyTheme();
+    return;
+  }
   if (event.target.closest("#notificationButton")) {
     state.notificationOpen = !state.notificationOpen;
     renderNotifications();
@@ -2054,6 +2083,7 @@ document.addEventListener("click", async (event) => {
   }
   if (event.target.closest("[data-clear-dashboard-filters]")) {
     state.dashboardFilters = {};
+    renderShell();
     renderDashboard();
   }
   const dashboardShortcut = event.target.closest("[data-dashboard-shortcut]");
@@ -2131,6 +2161,7 @@ document.addEventListener("change", (event) => {
   const dashboardFilter = event.target.closest("[data-dashboard-filter]");
   if (dashboardFilter) {
     state.dashboardFilters[dashboardFilter.dataset.dashboardFilter] = dashboardFilter.value;
+    renderShell();
     renderDashboard();
   }
   const filter = event.target.closest("[data-filter]");
@@ -2277,6 +2308,7 @@ document.addEventListener("submit", async (event) => {
 });
 
 applyLanguage();
+applyTheme();
 if (state.userId) {
   showAppShell();
   load().catch((error) => {
