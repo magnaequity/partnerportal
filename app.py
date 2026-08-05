@@ -293,6 +293,8 @@ def init_db():
     add_column_if_missing(conn, "users", "password_hash", "text")
     add_column_if_missing(conn, "operations", "usd_amount", "real default 0")
     add_column_if_missing(conn, "operations", "ves_amount", "real default 0")
+    add_column_if_missing(conn, "operations", "bank_fee_percent", "real default 0")
+    add_column_if_missing(conn, "operations", "bank_fee_amount", "real default 0")
     add_column_if_missing(conn, "operations", "binance_rate", "real default 0")
     add_column_if_missing(conn, "operations", "spread", "real default 0")
     add_column_if_missing(conn, "operations", "executed_at", "text")
@@ -811,6 +813,17 @@ def recalculate_amounts_for_rate(op, rate):
     return usd_amount, ves_amount
 
 
+def bank_fee_for_operation(op_type, ves_amount, source_account_id=None, destination_account_id=None):
+    if op_type not in ("buy_usd", "payment"):
+        return Decimal("0"), Decimal("0")
+    account = query("select currency, bank_fee_percent from accounts where id = ?", (source_account_id or destination_account_id,), one=True)
+    if not account or account["currency"] != "VES":
+        return Decimal("0"), Decimal("0")
+    fee_percent = Decimal(str(account["bank_fee_percent"] or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    fee_amount = (abs(Decimal(str(ves_amount or 0))) * fee_percent / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return fee_percent, fee_amount
+
+
 def decimal_setting(key, default="0"):
     return Decimal(str(get_setting(key, default) or default))
 
@@ -976,6 +989,9 @@ def set_operation_rate(operation_id):
     rate_only_update = op["status"] in ("rate_pending_approval", "expired")
     source_account_id = None if rate_only_update else data.get("source_account_id")
     destination_account_id = None if rate_only_update else data.get("destination_account_id")
+    effective_source_account_id = source_account_id or op.get("source_account_id")
+    effective_destination_account_id = destination_account_id or op.get("destination_account_id")
+    bank_fee_percent, bank_fee_amount = bank_fee_for_operation(op["type"], ves_amount, effective_source_account_id, effective_destination_account_id)
     metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
     metadata["binance_snapshot"] = {
         "reference_rate": money(binance_rate),
@@ -993,7 +1009,8 @@ def set_operation_rate(operation_id):
         set status = 'rate_pending_approval', rate = ?, binance_rate = ?, spread = ?,
             source_account_id = coalesce(?, source_account_id),
             destination_account_id = coalesce(?, destination_account_id),
-            usd_amount = ?, ves_amount = ?, metadata = ?, expires_at = ?, updated_at = ?
+            usd_amount = ?, ves_amount = ?, bank_fee_percent = ?, bank_fee_amount = ?,
+            metadata = ?, expires_at = ?, updated_at = ?
         where id = ?
         """,
         (
@@ -1004,6 +1021,8 @@ def set_operation_rate(operation_id):
             destination_account_id,
             money(usd_amount),
             money(ves_amount),
+            money(bank_fee_percent),
+            money(bank_fee_amount),
             json.dumps(metadata),
             expires_at,
             now_iso(),
@@ -1091,9 +1110,10 @@ def update_balance(account_id, delta, reason, operation_id):
     account = query("select * from accounts where id = ?", (account_id,), one=True)
     if not account:
         return
-    new_balance = money(account["balance"] + delta)
+    delta_decimal = Decimal(str(delta or 0))
+    new_balance = money(Decimal(str(account["balance"] or 0)) + delta_decimal)
     execute("update accounts set balance = ?, updated_at = ? where id = ?", (new_balance, now_iso(), account_id))
-    log_event(operation_id, "balance_updated", f"{reason}: {delta:+,.2f} {account['currency']}", metadata={"account_id": account_id, "new_balance": new_balance})
+    log_event(operation_id, "balance_updated", f"{reason}: {delta_decimal:+,.2f} {account['currency']}", metadata={"account_id": account_id, "new_balance": new_balance})
 
 
 def copy_attachment_to_operation(source_attachment_id, target_operation_id, label, user_id):
@@ -1132,6 +1152,7 @@ def create_payment_requests_from_sale(sale_op, allocations, source_account_id, u
         beneficiary_name = allocation.get("beneficiary_name") or beneficiary_id
         amount = money(allocation["amount_ves"])
         payment_type = "partner" if allocation.get("beneficiary_category") == "partner" else "provider"
+        bank_fee_percent, bank_fee_amount = bank_fee_for_operation("payment", amount, source_account_id)
         metadata = {
             "payment_type": payment_type,
             "source_sale_operation_id": sale_op["id"],
@@ -1142,8 +1163,9 @@ def create_payment_requests_from_sale(sale_op, allocations, source_account_id, u
             insert into operations
             (id, partner_id, type, status, reason, requested_currency, requested_amount, rate,
              source_account_id, destination_account_id, beneficiary_id, linked_operation_id,
-             final_currency, final_amount, created_by, metadata, usd_amount, ves_amount, created_at, updated_at)
-            values (?, ?, 'payment', 'funded', ?, 'VES', ?, ?, ?, ?, ?, ?, 'VES', ?, ?, ?, 0, ?, ?, ?)
+             final_currency, final_amount, created_by, metadata, usd_amount, ves_amount,
+             bank_fee_percent, bank_fee_amount, created_at, updated_at)
+            values (?, ?, 'payment', 'funded', ?, 'VES', ?, ?, ?, ?, ?, ?, 'VES', ?, ?, ?, 0, ?, ?, ?, ?, ?)
             """,
             (
                 payment_id,
@@ -1159,6 +1181,8 @@ def create_payment_requests_from_sale(sale_op, allocations, source_account_id, u
                 user_id,
                 json.dumps(metadata),
                 -abs(amount),
+                money(bank_fee_percent),
+                money(bank_fee_amount),
                 ts,
                 ts,
             ),
@@ -1200,6 +1224,7 @@ def execute_operation(operation_id):
     else:
         usd_amount = money(op.get("usd_amount") or 0)
         ves_amount = money(op.get("ves_amount") or 0)
+    bank_fee_percent, bank_fee_amount = bank_fee_for_operation(op["type"], ves_amount, source_account, destination_account)
     allocations = []
     if op["type"] == "sell_usd":
         allocation_items = metadata_value(op, "payment_allocations", [])
@@ -1215,14 +1240,25 @@ def execute_operation(operation_id):
         """
         update operations
         set status = 'completed', source_account_id = ?, destination_account_id = ?,
-            usd_amount = ?, ves_amount = ?, executed_at = ?, updated_at = ?
+            usd_amount = ?, ves_amount = ?, bank_fee_percent = ?, bank_fee_amount = ?,
+            executed_at = ?, updated_at = ?
         where id = ?
         """,
-        (source_account, destination_account, usd_amount, ves_amount, now_iso(), now_iso(), operation_id),
+        (
+            source_account,
+            destination_account,
+            usd_amount,
+            ves_amount,
+            money(bank_fee_percent),
+            money(bank_fee_amount),
+            now_iso(),
+            now_iso(),
+            operation_id,
+        ),
     )
     save_request_files(operation_id, user["id"])
     if op["type"] == "buy_usd":
-        update_balance(source_account, ves_amount, "Salida VES por compra USD", operation_id)
+        update_balance(source_account, Decimal(str(ves_amount)) - bank_fee_amount, "Salida VES por compra USD y comision bancaria", operation_id)
         update_balance(destination_account, usd_amount, "Entrada USD por compra", operation_id)
     elif op["type"] == "sell_usd":
         update_balance(source_account, usd_amount, "Salida USD por venta", operation_id)
@@ -1230,7 +1266,7 @@ def execute_operation(operation_id):
         if allocations:
             create_payment_requests_from_sale({**op, "destination_account_id": destination_account}, allocations, destination_account, user["id"])
     elif op["type"] == "payment":
-        update_balance(source_account, -abs(ves_amount or op.get("requested_amount") or 0), "Dispersion de pago", operation_id)
+        update_balance(source_account, -abs(Decimal(str(ves_amount or op.get("requested_amount") or 0))) - bank_fee_amount, "Dispersion de pago y comision bancaria", operation_id)
     log_event(operation_id, "completed", "Master completo la operacion y cargo los soportes requeridos.", user["id"], data.get("comment"))
     return jsonify({"operation": operation_payload(operation_id)})
 

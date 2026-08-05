@@ -106,6 +106,7 @@ const labels = {
     currentBalance: "Saldo actual",
     bankFee: "Comisión",
     bankFeePercent: "Comisión bancaria %",
+    bankFeeAmount: "Comisión bancaria",
     accountNumber: "Número de cuenta",
     accountType: "Tipo cuenta",
     identification: "Identificación",
@@ -277,6 +278,7 @@ const labels = {
     currentBalance: "Current balance",
     bankFee: "Fee",
     bankFeePercent: "Bank fee %",
+    bankFeeAmount: "Bank fee",
     accountNumber: "Account number",
     accountType: "Account type",
     identification: "Identification",
@@ -435,6 +437,16 @@ function typeLabel(type, metadata = {}) {
 
 function accountName(id) {
   return state.data?.accounts.find((item) => item.id === id)?.name || "—";
+}
+
+function accountById(id) {
+  return state.data?.accounts.find((item) => item.id === id);
+}
+
+function bankFeeForAccount(accountId, vesAmount) {
+  const account = accountById(accountId);
+  const percent = account?.currency === "VES" ? Number(account.bank_fee_percent || 0) : 0;
+  return { percent, amount: Math.abs(Number(vesAmount || 0)) * percent / 100 };
 }
 
 function beneficiaryName(id) {
@@ -684,6 +696,7 @@ function operationTable(ops, actions = true) {
             <th>${t("category")}</th>
             <th>USD</th>
             <th>VES</th>
+            <th>${t("bankFeeAmount")}</th>
             <th>${t("rate")}</th>
             <th>${t("binanceRange")}</th>
             <th>${t("status")}</th>
@@ -699,6 +712,7 @@ function operationTable(ops, actions = true) {
               <td>${typeLabel(op.type, op.metadata || {})}</td>
               <td class="${Number(op.usd_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.usd_amount, "USD")}</td>
               <td class="${Number(op.ves_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.ves_amount, "VES")}</td>
+              <td>${Number(op.bank_fee_amount || 0) ? money(op.bank_fee_amount, "VES") : "—"}</td>
               <td>${op.rate ? money(op.rate) : "—"}</td>
               <td>${binancePill(op)}</td>
               <td><span class="status ${statusClass(op.status)}">${op.status}</span></td>
@@ -706,7 +720,7 @@ function operationTable(ops, actions = true) {
               <td>${new Date(op.created_at).toLocaleDateString()}</td>
               ${actions ? `<td><button class="subtle" data-open-operation="${op.id}" type="button">${t("view")}</button></td>` : ""}
             </tr>
-          `).join("") || `<tr><td colspan="${actions ? 10 : 9}" class="muted">${t("noOperations")}</td></tr>`}
+          `).join("") || `<tr><td colspan="${actions ? 11 : 10}" class="muted">${t("noOperations")}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1198,6 +1212,7 @@ function openOperationDetail(id) {
       <div class="detail-item"><span>${t("beneficiary")}</span><strong>${beneficiaryName(op.beneficiary_id)}</strong></div>
       <div class="detail-item"><span>USD</span><strong class="${Number(op.usd_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.usd_amount, "USD")}</strong></div>
       <div class="detail-item"><span>VES</span><strong class="${Number(op.ves_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.ves_amount, "VES")}</strong></div>
+      <div class="detail-item"><span>${t("bankFeeAmount")}</span><strong>${Number(op.bank_fee_amount || 0) ? `${money(op.bank_fee_amount, "VES")} · ${money(op.bank_fee_percent)}%` : "—"}</strong></div>
       <div class="detail-item"><span>${t("account")}</span><strong>${accountName(op.source_account_id || op.destination_account_id)}</strong></div>
     </div>
     <section>
@@ -1289,16 +1304,31 @@ async function fetchBinanceRate(form) {
   toast(`${t("binance")}: ${money(result.rate)}`);
 }
 
+function updateBankFeePreview(form) {
+  const preview = form?.querySelector("[data-bank-fee-preview]");
+  if (!preview) return;
+  const amount = Number(preview.dataset.bankFeeAmount || 0);
+  const fee = bankFeeForAccount(form.elements.source_account_id?.value, amount);
+  preview.querySelector("strong").textContent = money(fee.amount, "VES");
+  preview.querySelector("small").textContent = `${money(fee.percent)}%`;
+}
+
 function openExecuteModal(id) {
   const op = state.data.operations.find((item) => item.id === id);
   if (op.type === "payment") {
     const paymentVesAmount = Math.abs(Number(op.ves_amount || op.requested_amount || 0));
+    const paymentFee = bankFeeForAccount(op.source_account_id, paymentVesAmount);
     openModal(t("executeOperation"), `
       <form data-execute-form="${id}" class="form-grid" enctype="multipart/form-data">
         <div class="readonly-amount">
           <span>${t("amountVes")}</span>
           <strong>${money(paymentVesAmount, "VES")}</strong>
           <small>${t("approvedAmountLocked")}</small>
+        </div>
+        <div class="readonly-amount" data-bank-fee-preview data-bank-fee-amount="${paymentVesAmount}">
+          <span>${t("bankFeeAmount")}</span>
+          <strong>${money(paymentFee.amount, "VES")}</strong>
+          <small>${money(paymentFee.percent)}%</small>
         </div>
         <input name="ves_amount" type="hidden" value="${paymentVesAmount}" />
         <label>${t("outboundAccount")}<select name="source_account_id">${accountOptions("VES", op.source_account_id)}</select></label>
@@ -1311,6 +1341,7 @@ function openExecuteModal(id) {
   }
   const usdAmount = Number(op.usd_amount || 0);
   const vesAmount = Number(op.ves_amount || 0);
+  const fxFee = bankFeeForAccount(op.source_account_id, vesAmount);
   const outboundProof = op.type === "buy_usd"
     ? { name: "ves_exit_support", label: t("vesExitSupport"), accept: "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" }
     : { name: "usd_exit_support", label: t("usdExitSupport"), accept: "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" };
@@ -1328,6 +1359,11 @@ function openExecuteModal(id) {
         <span>${t("amountVes")}</span>
         <strong>${money(vesAmount, "VES")}</strong>
         <small>${t("approvedAmountLocked")}</small>
+      </div>
+      <div class="readonly-amount" data-bank-fee-preview data-bank-fee-amount="${vesAmount}">
+        <span>${t("bankFeeAmount")}</span>
+        <strong>${money(fxFee.amount, "VES")}</strong>
+        <small>${money(fxFee.percent)}%</small>
       </div>
       <input name="usd_amount" type="hidden" value="${usdAmount}" />
       <input name="ves_amount" type="hidden" value="${vesAmount}" />
@@ -1475,6 +1511,9 @@ document.addEventListener("change", (event) => {
   if (inputCurrency) syncTreasuryAmounts(inputCurrency.closest("[data-treasury-form]"));
   if (event.target.closest("[data-allocation-row] input[type='file']")) {
     updatePaymentAllocationSummary(event.target.closest("[data-treasury-form]"));
+  }
+  if (event.target.closest("[data-execute-form] select[name='source_account_id']")) {
+    updateBankFeePreview(event.target.closest("[data-execute-form]"));
   }
 });
 
