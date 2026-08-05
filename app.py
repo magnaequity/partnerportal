@@ -42,6 +42,7 @@ CLIENT_ROLES = ("super_approver", "treasury", "finance")
 BINANCE_RATE_URL = "https://consulta-rates.insularcambios.com/v1/tasas/binance"
 RATE_EDITABLE_STATUSES = ("pending_master", "in_negotiation", "rate_pending_approval", "expired")
 UNASSIGNED_USE = "unassigned_use"
+INCREASE_POSITION_USE = "increase_position"
 INITIAL_PASSWORD_ENVS = {
     "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
     "usr-yango-super": "YANGO_APPROVER_PASSWORD",
@@ -171,10 +172,39 @@ def add_column_if_missing(conn, table, column, definition):
         conn.execute(f"alter table {table} add column {column} {definition}")
 
 
+def migrate_expected_rates(conn):
+    rows = conn.execute(
+        """
+        select id, type, status, rate, metadata
+        from operations
+        where type in ('buy_usd', 'sell_usd')
+        """
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        changed = False
+        if row["type"] == "buy_usd" and metadata.get("usage_key") != INCREASE_POSITION_USE:
+            metadata["usage_key"] = INCREASE_POSITION_USE
+            metadata["usage_category_id"] = INCREASE_POSITION_USE
+            metadata["use_unassigned"] = False
+            changed = True
+        is_pre_master_rate = row["status"] in ("pending_master", "in_negotiation") and row["rate"]
+        if is_pre_master_rate and not metadata.get("expected_rate"):
+            metadata["expected_rate"] = money(row["rate"])
+            conn.execute("update operations set rate = null where id = ?", (row["id"],))
+            changed = True
+        if changed:
+            conn.execute("update operations set metadata = ? where id = ?", (json.dumps(metadata), row["id"]))
+
+
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     conn.executescript(
         """
         create table if not exists partners (
@@ -300,6 +330,7 @@ def init_db():
     add_column_if_missing(conn, "operations", "executed_at", "text")
     add_column_if_missing(conn, "attachments", "stored_path", "text")
     add_column_if_missing(conn, "attachments", "content_type", "text")
+    migrate_expected_rates(conn)
     conn.commit()
     conn.close()
     seed_db()
@@ -886,6 +917,8 @@ def create_treasury_request():
         data = request.get_json(force=True)
     op_type, usd_amount, ves_amount = normalize_treasury_amounts(data)
     usage_category_id = data.get("usage_category_id")
+    if op_type == "buy_usd":
+        usage_category_id = INCREASE_POSITION_USE
     requires_payment_allocation = op_type == "sell_usd" and usage_category_id != UNASSIGNED_USE
     allocation_target = ves_amount if requires_payment_allocation else None
     allocations, _allocation_total, allocation_error = parse_payment_allocations(
@@ -902,6 +935,8 @@ def create_treasury_request():
     metadata = {
         "usage_category_id": usage_category_id,
         "use_unassigned": usage_category_id == UNASSIGNED_USE,
+        "usage_key": INCREASE_POSITION_USE if op_type == "buy_usd" else "",
+        "expected_rate": money(data.get("expected_rate") or 0),
         "input_currency": data.get("input_currency"),
         "comment": data.get("comment", ""),
         "document_type": data.get("document_type", ""),
@@ -919,10 +954,10 @@ def create_treasury_request():
             operation_id,
             data.get("partner_id") or user.get("partner_id") or "partner-yango",
             op_type,
-            data.get("reason") or ("Compra USD" if op_type == "buy_usd" else "Venta USD"),
+            data.get("reason") or ("Aumentar posicion" if op_type == "buy_usd" else "Venta USD"),
             data.get("input_currency") or "USD",
             money(data.get("usd_amount") or data.get("ves_amount") or 0),
-            money(data.get("expected_rate") or 0),
+            None,
             data.get("source_account_id") or None,
             data.get("destination_account_id") or None,
             data.get("beneficiary_id") or None,

@@ -10,6 +10,7 @@ const state = {
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => [...document.querySelectorAll(selector)];
 const UNASSIGNED_USE = "unassigned_use";
+const INCREASE_POSITION_USE = "increase_position";
 
 const labels = {
   es: {
@@ -142,6 +143,7 @@ const labels = {
     operationSide: "Tipo",
     inputCurrency: "Imputar monto en",
     expectedRate: "Tasa esperada",
+    increasePosition: "Aumentar posición",
     usage: "Uso",
     unassignedUse: "Sin uso asignado todavía",
     beneficiary: "Beneficiario",
@@ -335,6 +337,7 @@ const labels = {
     operationSide: "Type",
     inputCurrency: "Input amount in",
     expectedRate: "Expected rate",
+    increasePosition: "Increase position",
     usage: "Use",
     unassignedUse: "Use is not determined yet",
     beneficiary: "Beneficiary",
@@ -475,6 +478,22 @@ function typeLabel(type, metadata = {}) {
   if (type === "sell_usd") return t("sellUsd");
   if (type === "payment") return metadata.payment_type === "partner" ? t("partnerPayment") : t("providerPayment");
   return type;
+}
+
+function expectedRate(op) {
+  return Number(op.metadata?.expected_rate || 0);
+}
+
+function achievedRate(op) {
+  return Number(op.rate || 0);
+}
+
+function operationUsageName(op) {
+  const metadata = op.metadata || {};
+  if (metadata.usage_key === INCREASE_POSITION_USE || metadata.usage_category_id === INCREASE_POSITION_USE || op.type === "buy_usd") return t("increasePosition");
+  if (metadata.use_unassigned || metadata.usage_category_id === UNASSIGNED_USE) return t("unassignedUse");
+  if (metadata.usage_category_id) return categoryName(metadata.usage_category_id);
+  return "—";
 }
 
 function accountName(id) {
@@ -1012,7 +1031,8 @@ function operationTable(ops, actions = true) {
             <th>USD</th>
             <th>VES</th>
             <th>${t("bankFeeAmount")}</th>
-            <th>${t("rate")}</th>
+            <th>${t("expectedRate")}</th>
+            <th>${t("achievedRate")}</th>
             <th>${t("binanceRange")}</th>
             <th>${t("status")}</th>
             <th>${t("account")}</th>
@@ -1028,14 +1048,15 @@ function operationTable(ops, actions = true) {
               <td class="${Number(op.usd_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.usd_amount, "USD")}</td>
               <td class="${Number(op.ves_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.ves_amount, "VES")}</td>
               <td>${Number(op.bank_fee_amount || 0) ? money(op.bank_fee_amount, "VES") : "—"}</td>
-              <td>${op.rate ? money(op.rate) : "—"}</td>
+              <td>${expectedRate(op) ? money(expectedRate(op)) : "—"}</td>
+              <td>${achievedRate(op) ? money(achievedRate(op)) : "—"}</td>
               <td>${binancePill(op)}</td>
               <td><span class="status ${statusClass(op.status)}">${op.status}</span></td>
               <td>${accountName(op.source_account_id || op.destination_account_id)}</td>
               <td>${new Date(op.created_at).toLocaleDateString()}</td>
               ${actions ? `<td><button class="subtle" data-open-operation="${op.id}" type="button">${t("view")}</button></td>` : ""}
             </tr>
-          `).join("") || `<tr><td colspan="${actions ? 11 : 10}" class="muted">${t("noOperations")}</td></tr>`}
+          `).join("") || `<tr><td colspan="${actions ? 12 : 11}" class="muted">${t("noOperations")}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1270,7 +1291,11 @@ function openTreasuryModal() {
       <label>${t("amountUsd")}<input name="usd_amount" type="number" step="0.01" data-treasury-usd /></label>
       <label>${t("amountVes")}<input name="ves_amount" type="number" step="0.01" data-treasury-ves /></label>
       <label>${t("expectedRate")}<input name="expected_rate" type="number" step="0.0001" data-treasury-rate /></label>
-      <label>${t("usage")}
+      <div class="readonly-amount hidden" data-buy-usage>
+        <span>${t("usage")}</span>
+        <strong>${t("increasePosition")}</strong>
+      </div>
+      <label data-usage-field>${t("usage")}
         <select name="usage_category_id" data-usage-category>
           <option value="${UNASSIGNED_USE}">${t("unassignedUse")}</option>
           ${categories.map((cat) => `<option value="${cat.id}">${cat.name}</option>`).join("")}
@@ -1284,7 +1309,9 @@ function openTreasuryModal() {
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
     </form>
   `);
-  syncTreasuryAmounts(qs("[data-treasury-form]"));
+  const form = qs("[data-treasury-form]");
+  syncTreasuryUsage(form);
+  syncTreasuryAmounts(form);
 }
 
 function beneficiariesForCategory(categoryId) {
@@ -1374,6 +1401,18 @@ function decimalInput(value) {
   return Number(value || 0).toFixed(2);
 }
 
+function syncTreasuryUsage(form) {
+  if (!form) return;
+  const isBuy = form.elements.operation_side?.value === "buy";
+  const buyUsage = form.querySelector("[data-buy-usage]");
+  const usageField = form.querySelector("[data-usage-field]");
+  if (buyUsage) buyUsage.classList.toggle("hidden", !isBuy);
+  if (usageField) usageField.classList.toggle("hidden", isBuy);
+  if (isBuy && form.elements.usage_category_id) {
+    form.elements.usage_category_id.value = UNASSIGNED_USE;
+  }
+}
+
 function syncTreasuryAmounts(form) {
   if (!form) return;
   const inputCurrency = form.elements.input_currency?.value || "VES";
@@ -1381,6 +1420,7 @@ function syncTreasuryAmounts(form) {
   const vesInput = form.elements.ves_amount;
   const rate = Number(form.elements.expected_rate?.value || 0);
   if (!usdInput || !vesInput) return;
+  syncTreasuryUsage(form);
   usdInput.readOnly = inputCurrency === "VES";
   vesInput.readOnly = inputCurrency === "USD";
   if (rate > 0 && inputCurrency === "USD" && Number(usdInput.value || 0)) {
@@ -1520,7 +1560,9 @@ function openOperationDetail(id) {
     <div class="detail-list">
       <div class="detail-item"><span>${t("category")}</span><strong>${typeLabel(op.type, op.metadata || {})}</strong></div>
       <div class="detail-item"><span>${t("status")}</span><strong>${op.status}</strong></div>
-      <div class="detail-item"><span>${t("rate")}</span><strong>${op.rate ? money(op.rate) : "—"}</strong></div>
+      <div class="detail-item"><span>${t("usage")}</span><strong>${operationUsageName(op)}</strong></div>
+      <div class="detail-item"><span>${t("expectedRate")}</span><strong>${expectedRate(op) ? money(expectedRate(op)) : "—"}</strong></div>
+      <div class="detail-item"><span>${t("achievedRate")}</span><strong>${achievedRate(op) ? money(achievedRate(op)) : "—"}</strong></div>
       <div class="detail-item"><span>Binance</span><strong>${op.binance_rate ? money(op.binance_rate) : "—"}</strong></div>
       <div class="detail-item"><span>Spread</span><strong>${op.spread ? `${money(op.spread)}%` : "—"}</strong></div>
       <div class="detail-item"><span>${t("binanceRange")}</span><strong>${binancePill(op)}</strong></div>
@@ -1575,7 +1617,11 @@ function openRateModal(id) {
   `;
   openModal(rateOnly ? t("editRate") : t("loadRate"), `
     <form data-rate-form="${id}" class="form-grid">
-      <label>${t("achievedRate")}<input name="rate" type="number" step="0.0001" value="${op.rate || ""}" data-operation-rate required /></label>
+      <div class="readonly-amount">
+        <span>${t("expectedRate")}</span>
+        <strong>${expectedRate(op) ? money(expectedRate(op)) : "—"}</strong>
+      </div>
+      <label>${t("achievedRate")}<input name="rate" type="number" step="0.0001" value="${achievedRate(op) || ""}" data-operation-rate required /></label>
       <label class="binance-field">${t("binance")}
         <span class="binance-input-wrap">
           <input name="binance_rate" type="number" step="0.0001" value="${op.binance_rate || ""}" data-binance-rate />
