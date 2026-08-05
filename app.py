@@ -393,6 +393,11 @@ def uploaded_file(filename):
     return send_from_directory(UPLOAD_DIR, filename)
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return send_from_directory(app.static_folder, "assets/favicon.png", mimetype="image/png")
+
+
 def expire_pending_rates():
     rows = query(
         """
