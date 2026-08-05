@@ -422,14 +422,281 @@ input[readonly] {
   line-height: 1.12;
 }
 
+.pending-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pending-card {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  min-height: 108px;
+  padding: 16px 18px 16px 20px;
+  overflow: hidden;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(241, 249, 251, 0.86)),
+    var(--panel);
+  box-shadow: var(--soft-shadow);
+}
+
+.pending-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--cyan);
+}
+
+.pending-card::after {
+  content: "";
+  position: absolute;
+  right: -26px;
+  top: -34px;
+  width: 94px;
+  height: 94px;
+  border-radius: 50%;
+  background: rgba(88, 198, 228, 0.16);
+}
+
+.pending-card.execution::before {
+  background: #f0b90b;
+}
+
+.pending-card.execution::after {
+  background: rgba(240, 185, 11, 0.16);
+}
+
+.pending-card span,
+.pending-card small,
+.pending-card strong {
+  position: relative;
+  z-index: 1;
+}
+
+.pending-card span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.pending-card strong {
+  color: var(--ink);
+  font-size: 2.1rem;
+  line-height: 1;
+}
+
+.pending-card small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.pending-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(88, 198, 228, 0.36);
+  box-shadow: 0 20px 42px rgba(4, 36, 49, 0.12);
+}
+
 .toolbar {
   display: grid;
   grid-template-columns: repeat(6, minmax(120px, 1fr));
   gap: 10px;
 }
 
+.operation-filters {
+  align-items: end;
+  grid-template-columns: minmax(128px, 0.85fr) minmax(140px, 0.95fr) minmax(240px, 1.45fr) minmax(220px, 1.2fr) minmax(170px, 1fr) auto;
+}
+
+.filter-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.filter-field > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  color: var(--cyan-2);
+  font-size: 0.76rem;
+  font-weight: 900;
+  background: rgba(88, 198, 228, 0.14);
+}
+
+.amount-filter-row,
+.custom-date-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.amount-filter-row select {
+  width: 88px;
+}
+
+.custom-date-range {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.clear-filters {
+  align-self: end;
+  height: 44px;
+  white-space: nowrap;
+}
+
 .table-wrap {
   overflow: auto;
+}
+
+.compact-table table {
+  min-width: 760px;
+}
+
+.bar-chart,
+.rate-chart {
+  display: grid;
+  gap: 12px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-row span,
+.bar-row strong {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.bar-track {
+  position: relative;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(7, 37, 51, 0.06);
+  overflow: hidden;
+}
+
+.bar-track::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(7, 37, 51, 0.16);
+}
+
+.bar {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  display: block;
+}
+
+.bar.positive {
+  left: 50%;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(90deg, rgba(32, 154, 103, 0.72), rgba(45, 190, 127, 0.92));
+}
+
+.bar.negative {
+  right: 50%;
+  border-radius: 999px 0 0 999px;
+  background: linear-gradient(90deg, rgba(205, 56, 69, 0.92), rgba(205, 56, 69, 0.66));
+}
+
+.rate-chart svg {
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  background: rgba(248, 251, 252, 0.82);
+}
+
+.rate-chart line {
+  stroke: rgba(7, 37, 51, 0.16);
+  stroke-width: 1;
+}
+
+.rate-chart text {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+
+.rate-chart .line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rate-chart .line.buy {
+  stroke: #209a67;
+}
+
+.rate-chart .line.sell {
+  stroke: #cd3845;
+}
+
+.rate-chart .line.binance {
+  stroke: #f0b90b;
+  stroke-dasharray: 7 7;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.chart-legend span::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.chart-legend .buy {
+  color: #209a67;
+}
+
+.chart-legend .sell {
+  color: #cd3845;
+}
+
+.chart-legend .binance {
+  color: #b98b00;
 }
 
 table {
@@ -873,6 +1140,7 @@ tbody tr:hover {
   }
 
   .summary-grid,
+  .pending-grid,
   .grid-2,
   .grid-3,
   .form-grid,

@@ -33,8 +33,19 @@ const labels = {
     users: "User Management",
     balances: "Saldos",
     settings: "Configuración",
-    pipeline: "Pipeline operativo",
     recentActivity: "Actividad reciente",
+    dailySummary: "Resumen diario",
+    usdFlow: "Compras y ventas USD",
+    dailyRates: "Tasas diarias",
+    qtyOperations: "Qty operaciones",
+    pendingApprovals: "Aprobaciones pendientes",
+    pendingExecution: "Pendientes por ejecutar",
+    awaitingClientApproval: "Tasas esperando aprobación cliente",
+    approvedOrFunded: "Operaciones aprobadas o fondeadas",
+    buyRate: "Tasa compra",
+    sellRate: "Tasa venta",
+    binanceRate: "Tasa Binance",
+    partnerPayments: "Pagos a partners",
     treasuryRequests: "Solicitudes de tesorería",
     approvalsInbox: "Bandeja de aprobaciones",
     approvalsSubtitle: "Tasas, negociación y ejecución",
@@ -75,12 +86,22 @@ const labels = {
     type: "Tipo",
     allTypes: "Tipo",
     allStatuses: "Status",
-    dateFrom: "Desde",
-    dateTo: "Hasta",
-    minUsd: "Min USD",
-    minVes: "Min VES",
+    dateFilter: "Fecha",
+    allDates: "Todas las fechas",
+    today: "Hoy",
+    yesterday: "Ayer",
+    thisWeek: "Esta semana",
+    previousWeek: "Semana anterior",
+    last7Days: "7 días anteriores",
+    last30Days: "30 días anteriores",
+    previousMonth: "Mes anterior",
+    last3Months: "3 meses anteriores",
+    last12Months: "12 meses anteriores",
+    customRange: "Rango de fechas fijo",
+    amountFilter: "Monto",
     amountUsd: "Monto USD",
     amountVes: "Monto VES",
+    clearFilters: "Limpiar",
     noOperations: "Sin operaciones.",
     noAccounts: "Sin cuentas.",
     noBeneficiaries: "Sin beneficiarios.",
@@ -205,8 +226,19 @@ const labels = {
     users: "User Management",
     balances: "Balances",
     settings: "Settings",
-    pipeline: "Operating pipeline",
     recentActivity: "Recent activity",
+    dailySummary: "Daily summary",
+    usdFlow: "USD buys and sells",
+    dailyRates: "Daily rates",
+    qtyOperations: "Qty operations",
+    pendingApprovals: "Pending approvals",
+    pendingExecution: "Pending execution",
+    awaitingClientApproval: "Rates waiting for client approval",
+    approvedOrFunded: "Approved or funded operations",
+    buyRate: "Buy rate",
+    sellRate: "Sell rate",
+    binanceRate: "Binance rate",
+    partnerPayments: "Partner payments",
     treasuryRequests: "Treasury requests",
     approvalsInbox: "Approvals inbox",
     approvalsSubtitle: "Rates, negotiation and execution",
@@ -247,12 +279,22 @@ const labels = {
     type: "Type",
     allTypes: "Type",
     allStatuses: "Status",
-    dateFrom: "From",
-    dateTo: "To",
-    minUsd: "Min USD",
-    minVes: "Min VES",
+    dateFilter: "Date",
+    allDates: "All dates",
+    today: "Today",
+    yesterday: "Yesterday",
+    thisWeek: "This week",
+    previousWeek: "Previous week",
+    last7Days: "Previous 7 days",
+    last30Days: "Previous 30 days",
+    previousMonth: "Previous month",
+    last3Months: "Previous 3 months",
+    last12Months: "Previous 12 months",
+    customRange: "Fixed date range",
+    amountFilter: "Amount",
     amountUsd: "USD amount",
     amountVes: "VES amount",
+    clearFilters: "Clear",
     noOperations: "No operations.",
     noAccounts: "No accounts.",
     noBeneficiaries: "No beneficiaries.",
@@ -562,18 +604,58 @@ function renderView() {
   renderers[state.view]?.();
 }
 
+function localDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateRangeForPreset(preset) {
+  const today = new Date();
+  const startOfThisWeek = addDays(today, -((today.getDay() + 6) % 7));
+  const startOfPreviousMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const endOfPreviousMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+  const ranges = {
+    today: [today, today],
+    yesterday: [addDays(today, -1), addDays(today, -1)],
+    this_week: [startOfThisWeek, today],
+    previous_week: [addDays(startOfThisWeek, -7), addDays(startOfThisWeek, -1)],
+    last_7_days: [addDays(today, -7), today],
+    last_30_days: [addDays(today, -30), today],
+    previous_month: [startOfPreviousMonth, endOfPreviousMonth],
+    last_3_months: [new Date(today.getFullYear(), today.getMonth() - 3, today.getDate()), today],
+    last_12_months: [new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()), today],
+  };
+  const range = ranges[preset];
+  return range ? { from: localDateString(range[0]), to: localDateString(range[1]) } : null;
+}
+
 function filteredOperations() {
   const f = state.filters;
+  const presetRange = f.date_preset && f.date_preset !== "custom" ? dateRangeForPreset(f.date_preset) : null;
+  const dateFrom = presetRange?.from || f.date_from;
+  const dateTo = presetRange?.to || f.date_to;
+  const amountCurrency = f.amount_currency || "USD";
+  const amountValue = Number(f.amount || 0);
   return state.data.operations.filter((op) => {
     const created = op.created_at?.slice(0, 10);
     const account = op.source_account_id || op.destination_account_id || "";
+    const amountToCheck = amountCurrency === "VES" ? op.ves_amount : op.usd_amount;
+    const pendingExecution = op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status));
     return (!f.type || op.type === f.type)
       && (!f.status || op.status === f.status)
+      && (!f.pending_execution || pendingExecution)
       && (!f.account || account === f.account)
-      && (!f.date_from || created >= f.date_from)
-      && (!f.date_to || created <= f.date_to)
-      && (!f.min_usd || Math.abs(Number(op.usd_amount || 0)) >= Number(f.min_usd))
-      && (!f.min_ves || Math.abs(Number(op.ves_amount || 0)) >= Number(f.min_ves));
+      && (!dateFrom || created >= dateFrom)
+      && (!dateTo || created <= dateTo)
+      && (!amountValue || Math.abs(Number(amountToCheck || 0)) >= amountValue);
   });
 }
 
@@ -612,25 +694,214 @@ function metricCards(ops) {
   `;
 }
 
+function pendingDashboardCards(ops) {
+  const pendingApprovals = ops.filter((op) => op.status === "rate_pending_approval");
+  const pendingExecution = ops.filter((op) => op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status)));
+  return `
+    <section class="pending-grid">
+      <button class="pending-card approval" data-dashboard-shortcut="approvals" type="button">
+        <span>${t("pendingApprovals")}</span>
+        <strong>${pendingApprovals.length}</strong>
+        <small>${t("awaitingClientApproval")}</small>
+      </button>
+      <button class="pending-card execution" data-dashboard-shortcut="execution" type="button">
+        <span>${t("pendingExecution")}</span>
+        <strong>${pendingExecution.length}</strong>
+        <small>${t("approvedOrFunded")}</small>
+      </button>
+    </section>
+  `;
+}
+
+function weightedAverage(total, weight) {
+  return weight ? total / weight : 0;
+}
+
+function operationDate(op) {
+  return (op.executed_at || op.created_at || "").slice(0, 10);
+}
+
+function dailyDashboardRows(ops, limit = 10) {
+  const days = new Map();
+  ops.forEach((op) => {
+    const date = operationDate(op);
+    if (!date) return;
+    if (!days.has(date)) {
+      days.set(date, {
+        date,
+        count: 0,
+        buyUsd: 0,
+        sellUsd: 0,
+        partnerPayments: 0,
+        buyRateTotal: 0,
+        buyRateWeight: 0,
+        sellRateTotal: 0,
+        sellRateWeight: 0,
+        binanceTotal: 0,
+        binanceWeight: 0,
+      });
+    }
+    const day = days.get(date);
+    const absUsd = Math.abs(Number(op.usd_amount || 0));
+    day.count += 1;
+    if (op.type === "buy_usd") {
+      day.buyUsd += absUsd;
+      day.buyRateTotal += Number(op.rate || 0) * absUsd;
+      day.buyRateWeight += absUsd;
+    }
+    if (op.type === "sell_usd") {
+      day.sellUsd += absUsd;
+      day.sellRateTotal += Number(op.rate || 0) * absUsd;
+      day.sellRateWeight += absUsd;
+    }
+    if (op.type === "payment" && op.status === "completed" && op.metadata?.payment_type === "partner") {
+      day.partnerPayments += Math.abs(Number(op.ves_amount || op.final_amount || op.requested_amount || 0));
+    }
+    if (["buy_usd", "sell_usd"].includes(op.type) && Number(op.binance_rate) && absUsd) {
+      day.binanceTotal += Number(op.binance_rate) * absUsd;
+      day.binanceWeight += absUsd;
+    }
+  });
+  return [...days.values()]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, limit)
+    .map((day) => ({
+      ...day,
+      buyRate: weightedAverage(day.buyRateTotal, day.buyRateWeight),
+      sellRate: weightedAverage(day.sellRateTotal, day.sellRateWeight),
+      binanceRate: weightedAverage(day.binanceTotal, day.binanceWeight),
+    }));
+}
+
+function compactDate(date) {
+  return new Date(`${date}T00:00:00`).toLocaleDateString(state.lang === "es" ? "es-VE" : "en-US", { month: "short", day: "numeric" });
+}
+
+function dailySummaryTable(rows) {
+  return `
+    <div class="table-wrap compact-table">
+      <table>
+        <thead>
+          <tr>
+            <th>${t("date")}</th>
+            <th>${t("qtyOperations")}</th>
+            <th>${t("buyUsd")}</th>
+            <th>${t("sellUsd")}</th>
+            <th>${t("partnerPayments")}</th>
+            <th>${t("buyRate")}</th>
+            <th>${t("sellRate")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td><strong>${compactDate(row.date)}</strong></td>
+              <td>${row.count}</td>
+              <td class="amount-positive">${money(row.buyUsd, "USD")}</td>
+              <td class="amount-negative">${money(row.sellUsd, "USD")}</td>
+              <td>${money(row.partnerPayments, "VES")}</td>
+              <td>${row.buyRate ? money(row.buyRate) : "—"}</td>
+              <td>${row.sellRate ? money(row.sellRate) : "—"}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="7" class="muted">${t("noOperations")}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function usdFlowChart(rows) {
+  const chronological = [...rows].reverse();
+  const maxValue = Math.max(...chronological.map((row) => Math.max(row.buyUsd, row.sellUsd)), 1);
+  return `
+    <div class="bar-chart">
+      ${chronological.map((row) => `
+        <div class="bar-row">
+          <span>${compactDate(row.date)}</span>
+          <div class="bar-track">
+            <i class="bar positive" style="width:${Math.max((row.buyUsd / maxValue) * 48, row.buyUsd ? 3 : 0)}%"></i>
+            <i class="bar negative" style="width:${Math.max((row.sellUsd / maxValue) * 48, row.sellUsd ? 3 : 0)}%"></i>
+          </div>
+          <strong>${money(row.buyUsd, "USD")} / ${money(row.sellUsd, "USD")}</strong>
+        </div>
+      `).join("") || `<p class="muted">${t("noOperations")}</p>`}
+    </div>
+  `;
+}
+
+function ratePolyline(points, values, minRate, maxRate) {
+  const width = 620;
+  const height = 220;
+  const pad = 24;
+  const rateRange = maxRate - minRate || 1;
+  return points.map((_, index) => {
+    const value = values[index];
+    if (!value) return "";
+    const x = pad + (index * (width - pad * 2)) / Math.max(points.length - 1, 1);
+    const y = height - pad - ((value - minRate) / rateRange) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).filter(Boolean).join(" ");
+}
+
+function ratesChart(rows) {
+  const chronological = [...rows].reverse();
+  const values = chronological.flatMap((row) => [row.buyRate, row.sellRate, row.binanceRate]).filter(Boolean);
+  if (!values.length) return `<p class="muted">${t("noOperations")}</p>`;
+  const minRate = Math.min(...values) * 0.995;
+  const maxRate = Math.max(...values) * 1.005;
+  const buyPoints = ratePolyline(chronological, chronological.map((row) => row.buyRate), minRate, maxRate);
+  const sellPoints = ratePolyline(chronological, chronological.map((row) => row.sellRate), minRate, maxRate);
+  const binancePoints = ratePolyline(chronological, chronological.map((row) => row.binanceRate), minRate, maxRate);
+  return `
+    <div class="rate-chart">
+      <svg viewBox="0 0 620 220" role="img" aria-label="${t("dailyRates")}">
+        <line x1="24" y1="196" x2="596" y2="196"></line>
+        <polyline class="line buy" points="${buyPoints}"></polyline>
+        <polyline class="line sell" points="${sellPoints}"></polyline>
+        <polyline class="line binance" points="${binancePoints}"></polyline>
+        ${chronological.map((row, index) => {
+          const x = 24 + (index * (620 - 48)) / Math.max(chronological.length - 1, 1);
+          return `<text x="${x.toFixed(1)}" y="214">${compactDate(row.date)}</text>`;
+        }).join("")}
+      </svg>
+      <div class="chart-legend">
+        <span class="buy">${t("buyRate")}</span>
+        <span class="sell">${t("sellRate")}</span>
+        <span class="binance">${t("binanceRate")}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderDashboard() {
   const ops = state.data.operations;
+  const rows = dailyDashboardRows(ops);
   qs("#viewBody").innerHTML = `
     ${metricCards(ops)}
-    <section class="grid-2">
+    ${pendingDashboardCards(ops)}
+    <section class="grid-2 dashboard-visuals">
       <article class="panel">
-        <div class="panel-header"><h2>${t("pipeline")}</h2></div>
-        ${operationTable(ops.slice(0, 8), false)}
+        <div class="panel-header"><h2>${t("usdFlow")}</h2></div>
+        ${usdFlowChart(rows)}
       </article>
       <article class="panel">
-        <div class="panel-header"><h2>${t("recentActivity")}</h2></div>
-        <div class="timeline">
-          ${ops.flatMap((op) => (op.events || []).map((event) => ({ ...event, op })))
-            .sort((a, b) => b.created_at.localeCompare(a.created_at))
-            .slice(0, 8)
-            .map((event) => `<div class="timeline-item"><strong>${event.description}</strong><div class="muted">${event.op.id} · ${new Date(event.created_at).toLocaleString()}</div></div>`)
-            .join("") || `<p class="muted">${t("noActivity")}</p>`}
-        </div>
+        <div class="panel-header"><h2>${t("dailyRates")}</h2></div>
+        ${ratesChart(rows)}
       </article>
+    </section>
+    <section class="panel">
+      <div class="panel-header"><h2>${t("dailySummary")}</h2></div>
+      ${dailySummaryTable(rows)}
+    </section>
+    <section class="panel">
+      <div class="panel-header"><h2>${t("recentActivity")}</h2></div>
+      <div class="timeline">
+        ${ops.flatMap((op) => (op.events || []).map((event) => ({ ...event, op })))
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .slice(0, 5)
+          .map((event) => `<div class="timeline-item"><strong>${event.description}</strong><div class="muted">${event.op.id} · ${new Date(event.created_at).toLocaleString()}</div></div>`)
+          .join("") || `<p class="muted">${t("noActivity")}</p>`}
+      </div>
     </section>
   `;
 }
@@ -663,23 +934,67 @@ function renderOperations() {
   const ops = filteredOperations();
   const accountOptions = state.data.accounts.map((account) => `<option value="${account.id}" ${state.filters.account === account.id ? "selected" : ""}>${account.name}</option>`).join("");
   const statuses = [...new Set(state.data.operations.map((op) => op.status))].sort();
+  const datePreset = state.filters.date_preset || "";
+  const amountCurrency = state.filters.amount_currency || "USD";
+  const dateOptions = [
+    ["", t("allDates")],
+    ["today", t("today")],
+    ["yesterday", t("yesterday")],
+    ["this_week", t("thisWeek")],
+    ["previous_week", t("previousWeek")],
+    ["last_7_days", t("last7Days")],
+    ["last_30_days", t("last30Days")],
+    ["previous_month", t("previousMonth")],
+    ["last_3_months", t("last3Months")],
+    ["last_12_months", t("last12Months")],
+    ["custom", t("customRange")],
+  ];
   qs("#viewBody").innerHTML = `
     ${metricCards(ops)}
     <section class="panel">
-      <div class="panel-header"><h2>${t("operationsLedger")}</h2></div>
-      <div class="toolbar">
-        <select data-filter="type">
-          <option value="">${t("allTypes")}</option>
-          <option value="buy_usd" ${state.filters.type === "buy_usd" ? "selected" : ""}>${t("buyUsd")}</option>
-          <option value="sell_usd" ${state.filters.type === "sell_usd" ? "selected" : ""}>${t("sellUsd")}</option>
-          <option value="payment" ${state.filters.type === "payment" ? "selected" : ""}>${t("payment")}</option>
-        </select>
-        <select data-filter="status"><option value="">${t("allStatuses")}</option>${statuses.map((status) => `<option ${state.filters.status === status ? "selected" : ""}>${status}</option>`).join("")}</select>
-        <input data-filter="date_from" type="date" value="${state.filters.date_from || ""}" />
-        <input data-filter="date_to" type="date" value="${state.filters.date_to || ""}" />
-        <input data-filter="min_usd" type="number" step="0.01" placeholder="${t("minUsd")}" value="${state.filters.min_usd || ""}" />
-        <input data-filter="min_ves" type="number" step="0.01" placeholder="${t("minVes")}" value="${state.filters.min_ves || ""}" />
-        <select data-filter="account"><option value="">${t("account")}</option>${accountOptions}</select>
+      <div class="panel-header">
+        <h2>${t("operationsLedger")}</h2>
+        ${state.filters.pending_execution ? `<span class="filter-chip">${t("pendingExecution")}</span>` : ""}
+      </div>
+      <div class="toolbar operation-filters">
+        <label class="filter-field">
+          <span>${t("type")}</span>
+          <select data-filter="type">
+            <option value="">${t("allTypes")}</option>
+            <option value="buy_usd" ${state.filters.type === "buy_usd" ? "selected" : ""}>${t("buyUsd")}</option>
+            <option value="sell_usd" ${state.filters.type === "sell_usd" ? "selected" : ""}>${t("sellUsd")}</option>
+            <option value="payment" ${state.filters.type === "payment" ? "selected" : ""}>${t("payment")}</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span>${t("status")}</span>
+          <select data-filter="status"><option value="">${t("allStatuses")}</option>${statuses.map((status) => `<option ${state.filters.status === status ? "selected" : ""}>${status}</option>`).join("")}</select>
+        </label>
+        <div class="filter-field date-filter">
+          <span>${t("dateFilter")}</span>
+          <select data-filter="date_preset">
+            ${dateOptions.map(([value, label]) => `<option value="${value}" ${datePreset === value ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+          <div class="custom-date-range ${datePreset === "custom" ? "" : "hidden"}">
+            <input data-filter="date_from" type="date" value="${state.filters.date_from || ""}" />
+            <input data-filter="date_to" type="date" value="${state.filters.date_to || ""}" />
+          </div>
+        </div>
+        <div class="filter-field amount-filter">
+          <span>${t("amountFilter")}</span>
+          <div class="amount-filter-row">
+            <input data-filter="amount" type="number" step="0.01" value="${state.filters.amount || ""}" placeholder="${t("amountFilter")}" />
+            <select data-filter="amount_currency">
+              <option value="USD" ${amountCurrency === "USD" ? "selected" : ""}>USD</option>
+              <option value="VES" ${amountCurrency === "VES" ? "selected" : ""}>VES</option>
+            </select>
+          </div>
+        </div>
+        <label class="filter-field">
+          <span>${t("account")}</span>
+          <select data-filter="account"><option value="">${t("account")}</option>${accountOptions}</select>
+        </label>
+        <button class="subtle clear-filters" data-clear-filters type="button">${t("clearFilters")}</button>
       </div>
     </section>
     ${operationTable(ops, true)}
@@ -1427,6 +1742,20 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("[data-action='new-beneficiary']")) openBeneficiaryModal();
   if (event.target.closest("[data-action='new-user']")) openUserModal();
   if (event.target.closest("[data-action='new-category']")) openCategoryModal();
+  if (event.target.closest("[data-clear-filters]")) {
+    state.filters = {};
+    renderOperations();
+  }
+  const dashboardShortcut = event.target.closest("[data-dashboard-shortcut]");
+  if (dashboardShortcut) {
+    state.view = "operations";
+    state.filters = dashboardShortcut.dataset.dashboardShortcut === "approvals"
+      ? { status: "rate_pending_approval" }
+      : { pending_execution: "1" };
+    renderShell();
+    renderView();
+    return;
+  }
 
   const openOp = event.target.closest("[data-open-operation]");
   if (openOp) openOperationDetail(openOp.dataset.openOperation);
