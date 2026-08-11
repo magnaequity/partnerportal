@@ -64,8 +64,10 @@ const labels = {
     viewPending: "Ver pendientes",
     pendingApprovals: "Aprobaciones pendientes",
     pendingExecution: "Pendientes por ejecutar",
+    otherActionables: "Por gestionar",
     awaitingClientApproval: "Tasas esperando aprobación cliente",
     approvedOrFunded: "Operaciones aprobadas o fondeadas",
+    rateAndReviewQueue: "Tasas, expiradas o rechazadas",
     buyRate: "Tasa compra",
     sellRate: "Tasa venta",
     binanceRate: "Tasa Binance",
@@ -274,8 +276,10 @@ const labels = {
     viewPending: "View pending",
     pendingApprovals: "Pending approvals",
     pendingExecution: "Pending execution",
+    otherActionables: "To manage",
     awaitingClientApproval: "Rates waiting for client approval",
     approvedOrFunded: "Approved or funded operations",
+    rateAndReviewQueue: "Rates, expired or rejected",
     buyRate: "Buy rate",
     sellRate: "Sell rate",
     binanceRate: "Binance rate",
@@ -820,16 +824,20 @@ function filteredOperations() {
     const created = op.created_at?.slice(0, 10);
     const account = op.source_account_id || op.destination_account_id || "";
     const amountToCheck = amountCurrency === "VES" ? op.ves_amount : op.usd_amount;
-    const pendingExecution = op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status));
     return (!f.type || op.type === f.type)
       && (!f.status || op.status === f.status)
       && (!f.actionables || actionableOperations({ operations: [op] }).length)
-      && (!f.pending_execution || pendingExecution)
+      && (!f.pending_execution || isPendingExecutionOperation(op))
+      && (!f.other_actionables || isOtherActionableOperation(op))
       && (!f.account || account === f.account)
       && (!dateFrom || created >= dateFrom)
       && (!dateTo || created <= dateTo)
       && (!amountValue || Math.abs(Number(amountToCheck || 0)) >= amountValue);
   });
+}
+
+function isPendingExecutionOperation(op) {
+  return op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status));
 }
 
 function actionableOperations(data = state.data) {
@@ -841,6 +849,12 @@ function actionableOperations(data = state.data) {
     }
     return op.status === "rate_pending_approval";
   });
+}
+
+function isOtherActionableOperation(op) {
+  return Boolean(actionableOperations({ operations: [op] }).length)
+    && !isPendingExecutionOperation(op)
+    && op.status !== "rate_pending_approval";
 }
 
 function actionLabel(op) {
@@ -989,13 +1003,19 @@ function dashboardSection(titleKey, body) {
 
 function pendingDashboardCards(ops) {
   const pendingApprovals = ops.filter((op) => op.status === "rate_pending_approval");
-  const pendingExecution = ops.filter((op) => op.status === "approved" || (op.type === "payment" && ["funded", "in_process"].includes(op.status)));
+  const otherActionables = ops.filter(isOtherActionableOperation);
+  const pendingExecution = ops.filter(isPendingExecutionOperation);
   return `
     <section class="pending-grid">
       <button class="pending-card approval" data-dashboard-shortcut="approvals" type="button">
         <span>${t("pendingApprovals")}</span>
         <strong>${pendingApprovals.length}</strong>
         <small>${t("awaitingClientApproval")}</small>
+      </button>
+      <button class="pending-card review" data-dashboard-shortcut="other_actionables" type="button">
+        <span>${t("otherActionables")}</span>
+        <strong>${otherActionables.length}</strong>
+        <small>${t("rateAndReviewQueue")}</small>
       </button>
       <button class="pending-card execution" data-dashboard-shortcut="execution" type="button">
         <span>${t("pendingExecution")}</span>
@@ -1316,6 +1336,7 @@ function renderOperations() {
         <h2>${t("operationsLedger")}</h2>
         ${state.filters.actionables ? `<span class="filter-chip">${t("actionables")}</span>` : ""}
         ${state.filters.pending_execution ? `<span class="filter-chip">${t("pendingExecution")}</span>` : ""}
+        ${state.filters.other_actionables ? `<span class="filter-chip">${t("otherActionables")}</span>` : ""}
       </div>
       <div class="toolbar operation-filters">
         <label class="filter-field">
@@ -2158,9 +2179,12 @@ document.addEventListener("click", async (event) => {
   const dashboardShortcut = event.target.closest("[data-dashboard-shortcut]");
   if (dashboardShortcut) {
     state.view = "operations";
-    state.filters = dashboardShortcut.dataset.dashboardShortcut === "approvals"
+    const shortcut = dashboardShortcut.dataset.dashboardShortcut;
+    state.filters = shortcut === "approvals"
       ? { status: "rate_pending_approval" }
-      : { pending_execution: "1" };
+      : shortcut === "other_actionables"
+        ? { other_actionables: "1" }
+        : { pending_execution: "1" };
     renderShell();
     renderView();
     return;

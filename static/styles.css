@@ -790,7 +790,7 @@ input[readonly] {
 
 .pending-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -835,6 +835,14 @@ input[readonly] {
 
 .pending-card.execution::after {
   background: rgba(240, 185, 11, 0.16);
+}
+
+.pending-card.review::before {
+  background: var(--ink-2);
+}
+
+.pending-card.review::after {
+  background: rgba(16, 70, 92, 0.13);
 }
 
 .pending-card span,
