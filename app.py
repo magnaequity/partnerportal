@@ -1372,6 +1372,10 @@ REPORT_LABELS = {
         "executed_rate": "Executed rate",
         "binance": "Binance",
         "spread": "Spread vs Binance",
+        "fees": "Fees",
+        "bank_fee": "Bank Fee",
+        "bank_fee_short": "Bank",
+        "management_fee_short": "Mgmt",
         "management_fee": "Management Fee",
         "narrative": "Executive Narrative",
         "settlement": "Settlement Accounts",
@@ -1398,6 +1402,7 @@ REPORT_LABELS = {
         "approved": "The client approved the rate on",
         "completed_on": "The transaction was completed on",
         "support_registered": "with support documentation registered in the portal.",
+        "fee_summary": "The transaction generated a bank fee of <b>{bank_fee}</b> ({bank_fee_percent}) and a management fee of <b>{management_fee}</b> ({management_fee_percent}).",
         "generated": "Generated",
         "operation": "Operation",
         "on": "On",
@@ -1412,6 +1417,10 @@ REPORT_LABELS = {
         "executed_rate": "Tasa ejecutada",
         "binance": "Binance",
         "spread": "Spread vs Binance",
+        "fees": "Comisiones",
+        "bank_fee": "Comision bancaria",
+        "bank_fee_short": "Bancaria",
+        "management_fee_short": "Mgmt",
         "management_fee": "Management Fee",
         "narrative": "Resumen Ejecutivo",
         "settlement": "Cuentas de Liquidacion",
@@ -1438,6 +1447,7 @@ REPORT_LABELS = {
         "approved": "El cliente aprobo la tasa el",
         "completed_on": "La transaccion fue completada el",
         "support_registered": "con soportes documentales registrados en el portal.",
+        "fee_summary": "La transaccion genero una comision bancaria de <b>{bank_fee}</b> ({bank_fee_percent}) y un management fee de <b>{management_fee}</b> ({management_fee_percent}).",
         "generated": "Generado",
         "operation": "Operacion",
         "on": "El",
@@ -1650,11 +1660,14 @@ def generate_trade_report(operation_id):
         c.setFont("Helvetica-Bold", 6.8)
         c.drawString(x + 10, y - 15, label.upper())
         c.setFillColor(color)
-        c.setFont("Helvetica-Bold", 10.2)
-        text = str(value or "-")
-        if stringWidth(text, "Helvetica-Bold", 10.2) > card_width - 20:
-            c.setFont("Helvetica-Bold", 8.6)
-        c.drawString(x + 10, y - 32, text)
+        value_lines = list(value) if isinstance(value, (list, tuple)) else [str(value or "-")]
+        value_lines = value_lines[:2] or ["-"]
+        for line_index, line in enumerate(value_lines):
+            font_size = 8.5 if len(value_lines) > 1 else 10.2
+            if stringWidth(str(line), "Helvetica-Bold", font_size) > card_width - 20:
+                font_size = 7.4 if len(value_lines) > 1 else 8.6
+            c.setFont("Helvetica-Bold", font_size)
+            c.drawString(x + 10, y - (29 + line_index * 11), str(line))
 
     def draw_cards(y, cards):
         gap = 10
@@ -1679,6 +1692,14 @@ def generate_trade_report(operation_id):
     if language == "en":
         usage_map = {"Pago a partners": "Partner payment", "Pago a proveedor": "Provider payment", INCREASE_POSITION_USE: "Increase position", UNASSIGNED_USE: "Use not determined"}
         usage = usage_map.get(usage, usage)
+    bank_fee_amount = Decimal(str(op.get("bank_fee_amount") or 0))
+    bank_fee_percent = Decimal(str(op.get("bank_fee_percent") or 0))
+    management_fee_amount = Decimal(str(op.get("management_fee_amount") or 0))
+    management_fee_percent = Decimal(str(op.get("management_fee_percent") or 0))
+    fees_card = [
+        f"{labels['bank_fee_short']}: {report_money(bank_fee_amount, 'VES')}",
+        f"{labels['management_fee_short']}: {report_money(management_fee_amount, 'USD')}",
+    ]
 
     draw_header()
     c.setFillColor(navy)
@@ -1710,7 +1731,7 @@ def generate_trade_report(operation_id):
         [
             (labels["binance"], report_money(op.get("binance_rate")) if binance_rate else "-"),
             (labels["spread"], f"{report_percent(op.get('spread'))} / {binance_status}", green if binance_status == "OK" else red if binance_status == "NO OK" else navy),
-            (labels["management_fee"], f"{report_money(op.get('management_fee_amount'), 'USD')} ({report_percent(op.get('management_fee_percent'))})"),
+            (labels["fees"], fees_card),
         ],
     )
     top -= 66
@@ -1726,7 +1747,8 @@ def generate_trade_report(operation_id):
         f"{labels['compared']} <b>{reference_rate}</b>, {labels['recorded_spread']} <b>{report_percent(op.get('spread'))}</b>. "
         f"{labels['approved']} <b>{report_datetime(approval_event.get('created_at') if approval_event else None)}</b>. "
         f"{labels['completed_on']} <b>{report_datetime(op.get('executed_at') or (execution_event.get('created_at') if execution_event else None))}</b>, "
-        f"{labels['support_registered']}"
+        f"{labels['support_registered']} "
+        f"{labels['fee_summary'].format(bank_fee=report_money(bank_fee_amount, 'VES'), bank_fee_percent=report_percent(bank_fee_percent), management_fee=report_money(management_fee_amount, 'USD'), management_fee_percent=report_percent(management_fee_percent))}"
     )
     top = draw_paragraph(narrative, margin, top, width - margin * 2) - 14
 
