@@ -666,6 +666,11 @@ input[readonly] {
   gap: 10px;
 }
 
+.settings-stack {
+  display: grid;
+  gap: 18px;
+}
+
 .dashboard-section-title {
   display: flex;
   align-items: center;

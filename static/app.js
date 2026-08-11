@@ -37,7 +37,7 @@ const labels = {
     treasury: "Tesorería",
     approvals: "Aprobaciones",
     operations: "Operaciones",
-    accounts: "Beneficiarios",
+    accounts: "Cuentas Bancarias",
     clientAccounts: "Cuentas Cliente",
     users: "User Management",
     settings: "Configuración",
@@ -249,7 +249,7 @@ const labels = {
     treasury: "Treasury",
     approvals: "Approvals",
     operations: "Operations",
-    accounts: "Beneficiaries",
+    accounts: "Bank Accounts",
     clientAccounts: "Client Accounts",
     users: "User Management",
     settings: "Settings",
@@ -453,8 +453,6 @@ const navItems = [
   ["approvals", "approvals"],
   ["operations", "operations"],
   ["accounts", "accounts"],
-  ["clientAccounts", "clientAccounts", "master"],
-  ["users", "users", "master"],
   ["settings", "settings", "master"],
 ];
 
@@ -725,9 +723,7 @@ function renderView() {
     treasury: renderTreasury,
     approvals: renderApprovals,
     operations: renderOperations,
-    accounts: renderAccountsBeneficiaries,
-    clientAccounts: renderClientAccounts,
-    users: renderUsers,
+    accounts: renderBankAccounts,
     settings: renderSettings,
   };
   qs("#viewBody").innerHTML = "";
@@ -1426,38 +1422,35 @@ function operationTable(ops, actions = true) {
   `;
 }
 
-function renderAccountsBeneficiaries() {
-  qs("#viewBody").innerHTML = `
-    <section class="panel">
-      <div class="panel-header">
-        <h2>${t("beneficiaries")}</h2>
-        <div class="row-actions">
-          <button class="ghost-button" data-action="new-beneficiary" type="button">${t("newBeneficiary")}</button>
-        </div>
-      </div>
-      ${beneficiariesTable(state.data.beneficiaries)}
-    </section>
-  `;
-}
-
-function renderClientAccounts() {
+function renderBankAccounts() {
   const clientAccounts = state.data.accounts.filter((account) => account.owner === "client");
   qs("#viewBody").innerHTML = `
-    <section class="panel">
-      <div class="panel-header">
-        <h2>${t("clientAccounts")}</h2>
-        <button class="primary" data-action="new-account" data-owner="client" type="button">${t("newAccount")}</button>
-      </div>
-      ${accountsTable(clientAccounts)}
+    <section class="settings-stack">
+      <article class="panel">
+        <div class="panel-header">
+          <h2>${t("beneficiaries")}</h2>
+          <div class="row-actions">
+            <button class="ghost-button" data-action="new-beneficiary" type="button">${t("newBeneficiary")}</button>
+          </div>
+        </div>
+        ${beneficiariesTable(state.data.beneficiaries)}
+      </article>
+      <article class="panel">
+        <div class="panel-header">
+          <h2>${t("clientAccounts")}</h2>
+          ${state.role === "magna_admin" ? `<button class="primary" data-action="new-account" data-owner="client" type="button">${t("newAccount")}</button>` : ""}
+        </div>
+        ${accountsTable(clientAccounts, state.role === "magna_admin")}
+      </article>
     </section>
   `;
 }
 
-function accountsTable(accounts) {
+function accountsTable(accounts, allowActions = true) {
   return `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>${t("name")}</th><th>${t("currency")}</th><th>${t("bankPlatform")}</th><th>${t("holder")}</th><th>${t("initialBalance")}</th><th>${t("currentBalance")}</th><th>${t("bankFee")}</th><th></th></tr></thead>
+        <thead><tr><th>${t("name")}</th><th>${t("currency")}</th><th>${t("bankPlatform")}</th><th>${t("holder")}</th><th>${t("initialBalance")}</th><th>${t("currentBalance")}</th><th>${t("bankFee")}</th>${allowActions ? "<th></th>" : ""}</tr></thead>
         <tbody>
           ${accounts.map((account) => `
             <tr>
@@ -1468,12 +1461,12 @@ function accountsTable(accounts) {
               <td>${money(account.initial_balance, account.currency)}</td>
               <td>${money(account.balance, account.currency)}</td>
               <td>${money(account.bank_fee_percent)}%</td>
-              <td class="row-actions">
+              ${allowActions ? `<td class="row-actions">
                 <button class="subtle" data-edit-account="${account.id}" type="button">${t("edit")}</button>
                 <button class="danger" data-delete-account="${account.id}" type="button">${t("delete")}</button>
-              </td>
+              </td>` : ""}
             </tr>
-          `).join("") || `<tr><td colspan="8" class="muted">${t("noAccounts")}</td></tr>`}
+          `).join("") || `<tr><td colspan="${allowActions ? 8 : 7}" class="muted">${t("noAccounts")}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1506,21 +1499,6 @@ function beneficiariesTable(items) {
   `;
 }
 
-function renderUsers() {
-  qs("#viewBody").innerHTML = `
-    <section class="grid-2">
-      <article class="panel">
-        <div class="panel-header"><h2>${t("users")}</h2><button class="primary" data-action="new-user" type="button">${t("newUser")}</button></div>
-        ${usersTable()}
-      </article>
-      <article class="panel">
-        <div class="panel-header"><h2>${t("categoryManagement")}</h2><button class="primary" data-action="new-category" type="button">${t("newCategory")}</button></div>
-        ${categoriesTable()}
-      </article>
-    </section>
-  `;
-}
-
 function usersTable() {
   return `
     <div class="table-wrap">
@@ -1549,14 +1527,26 @@ function categoriesTable() {
 
 function renderSettings() {
   qs("#viewBody").innerHTML = `
-    <section class="panel">
-      <div class="panel-header"><h2>${t("operationalSettings")}</h2></div>
-      <form data-settings-form class="form-grid">
-        <label>${t("rateExpirationMinutes")}<input name="rate_expiration_minutes" type="number" min="1" max="60" value="${state.data.settings.rate_expiration_minutes || 7}" /></label>
-        <label>${t("binanceRangePercent")}<input name="binance_range_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_range_percent || 1}" /></label>
-        <label>${t("binanceFeePercent")}<input name="binance_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_fee_percent || 0}" /></label>
-        <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
-      </form>
+    <section class="settings-stack">
+      <div class="grid-2">
+        <article class="panel">
+          <div class="panel-header"><h2>${t("users")}</h2><button class="primary" data-action="new-user" type="button">${t("newUser")}</button></div>
+          ${usersTable()}
+        </article>
+        <article class="panel">
+          <div class="panel-header"><h2>${t("categoryManagement")}</h2><button class="primary" data-action="new-category" type="button">${t("newCategory")}</button></div>
+          ${categoriesTable()}
+        </article>
+      </div>
+      <article class="panel">
+        <div class="panel-header"><h2>${t("operationalSettings")}</h2></div>
+        <form data-settings-form class="form-grid">
+          <label>${t("rateExpirationMinutes")}<input name="rate_expiration_minutes" type="number" min="1" max="60" value="${state.data.settings.rate_expiration_minutes || 7}" /></label>
+          <label>${t("binanceRangePercent")}<input name="binance_range_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_range_percent || 1}" /></label>
+          <label>${t("binanceFeePercent")}<input name="binance_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_fee_percent || 0}" /></label>
+          <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
+        </form>
+      </article>
     </section>
   `;
 }
