@@ -155,6 +155,9 @@ const labels = {
     bankFee: "Comisión",
     bankFeePercent: "Comisión bancaria %",
     bankFeeAmount: "Comisión bancaria",
+    managementFee: "Management Fee",
+    buyManagementFeePercent: "Management Fee Compra USD %",
+    sellManagementFeePercent: "Management Fee Venta USD %",
     accountNumber: "Número de cuenta",
     accountType: "Tipo cuenta",
     identification: "Identificación",
@@ -367,6 +370,9 @@ const labels = {
     bankFee: "Fee",
     bankFeePercent: "Bank fee %",
     bankFeeAmount: "Bank fee",
+    managementFee: "Management Fee",
+    buyManagementFeePercent: "Buy USD Management Fee %",
+    sellManagementFeePercent: "Sell USD Management Fee %",
     accountNumber: "Account number",
     accountType: "Account type",
     identification: "Identification",
@@ -917,6 +923,7 @@ function openActionablesView() {
 function operationStats(ops) {
   const usd = ops.reduce((sum, op) => sum + Number(op.usd_amount || 0), 0);
   const ves = ops.reduce((sum, op) => sum + Number(op.ves_amount || 0), 0);
+  const managementFee = ops.reduce((sum, op) => sum + Number(op.management_fee_amount || 0), 0);
   const rated = ops.filter((op) => Number(op.rate) && (Math.abs(Number(op.usd_amount)) || Math.abs(Number(op.ves_amount))));
   const weightedRate = rated.reduce((sum, op) => sum + Number(op.rate) * Math.abs(Number(op.usd_amount || 0)), 0);
   const weight = rated.reduce((sum, op) => sum + Math.abs(Number(op.usd_amount || 0)), 0);
@@ -941,6 +948,7 @@ function operationStats(ops) {
     count: ops.length,
     usd,
     ves,
+    managementFee,
     weighted: weight ? weightedRate / weight : 0,
     buyWeighted: buyWeight ? buyWeightedRate / buyWeight : 0,
     sellWeighted: sellWeight ? sellWeightedRate / sellWeight : 0,
@@ -956,9 +964,10 @@ function metricCards(ops) {
   const spreadClass = stats.weightedBinanceSpread === null ? "" : Math.abs(stats.weightedBinanceSpread) <= Number(state.data?.settings?.binance_range_percent || 1) ? "amount-positive" : "amount-negative";
   return `
     <div class="summary-grid">
-      <article class="metric-card"><span>${t("operationCount")}</span><strong>${stats.count}</strong></article>
+      <article class="metric-card count-metric"><span>${t("operationCount")}</span><strong>${stats.count}</strong></article>
       <article class="metric-card"><span>${t("netUsd")}</span><strong class="${stats.usd < 0 ? "amount-negative" : "amount-positive"}">${money(stats.usd, "USD")}</strong></article>
       <article class="metric-card"><span>${t("netVes")}</span><strong class="${stats.ves < 0 ? "amount-negative" : "amount-positive"}">${money(stats.ves, "VES")}</strong></article>
+      <article class="metric-card"><span>${t("managementFee")}</span><strong class="amount-positive">${money(stats.managementFee, "USD")}</strong></article>
       <article class="metric-card rate-metric">
         <span>${t("weightedRate")}</span>
         <strong>${stats.weighted ? money(stats.weighted) : "—"}</strong>
@@ -1080,6 +1089,7 @@ function dashboardRowsByPeriod(ops, granularity = "day", limit = 10) {
         count: 0,
         buyUsd: 0,
         sellUsd: 0,
+        managementFee: 0,
         partnerPayments: 0,
         providerPayments: 0,
         buyRateTotal: 0,
@@ -1103,6 +1113,7 @@ function dashboardRowsByPeriod(ops, granularity = "day", limit = 10) {
       period.sellRateTotal += Number(op.rate || 0) * absUsd;
       period.sellRateWeight += absUsd;
     }
+    period.managementFee += Number(op.management_fee_amount || 0);
     if (op.type === "payment" && op.status === "completed") {
       const paymentAmount = Math.abs(Number(op.ves_amount || op.final_amount || op.requested_amount || 0));
       if (op.metadata?.payment_type === "partner") period.partnerPayments += paymentAmount;
@@ -1142,6 +1153,7 @@ function dailySummaryTable(rows) {
             <th>${t("qtyOperations")}</th>
             <th>${t("buyUsd")}</th>
             <th>${t("sellUsd")}</th>
+            <th>${t("managementFee")}</th>
             <th>${t("partnerPayments")}</th>
             <th>${t("providerPayments")}</th>
             <th>${t("buyRate")}</th>
@@ -1155,12 +1167,13 @@ function dailySummaryTable(rows) {
               <td>${row.count}</td>
               <td class="amount-positive">${money(row.buyUsd, "USD")}</td>
               <td class="amount-negative">${money(row.sellUsd, "USD")}</td>
+              <td class="amount-positive">${money(row.managementFee, "USD")}</td>
               <td>${money(row.partnerPayments, "VES")}</td>
               <td>${money(row.providerPayments, "VES")}</td>
               <td>${row.buyRate ? money(row.buyRate) : "—"}</td>
               <td>${row.sellRate ? money(row.sellRate) : "—"}</td>
             </tr>
-          `).join("") || `<tr><td colspan="8" class="muted">${t("noOperations")}</td></tr>`}
+          `).join("") || `<tr><td colspan="9" class="muted">${t("noOperations")}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1380,6 +1393,19 @@ function renderOperations() {
 }
 
 function operationTable(ops, actions = true) {
+  const colSpan = actions ? 12 : 11;
+  const feeRow = (op) => Number(op.management_fee_amount || 0)
+    ? `
+      <tr class="management-fee-row" data-open-operation="${op.id}">
+        <td><strong>${op.id}-FEE</strong></td>
+        <td>${t("managementFee")}</td>
+        <td class="amount-positive">${money(op.management_fee_amount, "USD")}</td>
+        <td colspan="${colSpan - 3}">
+          ${typeLabel(op.type, op.metadata || {})} · ${money(op.management_fee_percent)}% · ${new Date(op.created_at).toLocaleDateString()}
+        </td>
+      </tr>
+    `
+    : "";
   return `
     <div class="table-wrap">
       <table>
@@ -1415,7 +1441,8 @@ function operationTable(ops, actions = true) {
               <td>${new Date(op.created_at).toLocaleDateString()}</td>
               ${actions ? `<td><button class="subtle" data-open-operation="${op.id}" type="button">${t("view")}</button></td>` : ""}
             </tr>
-          `).join("") || `<tr><td colspan="${actions ? 12 : 11}" class="muted">${t("noOperations")}</td></tr>`}
+            ${feeRow(op)}
+          `).join("") || `<tr><td colspan="${colSpan}" class="muted">${t("noOperations")}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1544,6 +1571,8 @@ function renderSettings() {
           <label>${t("rateExpirationMinutes")}<input name="rate_expiration_minutes" type="number" min="1" max="60" value="${state.data.settings.rate_expiration_minutes || 7}" /></label>
           <label>${t("binanceRangePercent")}<input name="binance_range_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_range_percent || 1}" /></label>
           <label>${t("binanceFeePercent")}<input name="binance_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_fee_percent || 0}" /></label>
+          <label>${t("buyManagementFeePercent")}<input name="buy_management_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.buy_management_fee_percent || 0}" /></label>
+          <label>${t("sellManagementFeePercent")}<input name="sell_management_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.sell_management_fee_percent || 0}" /></label>
           <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
         </form>
       </article>
@@ -1908,6 +1937,7 @@ function openOperationDetail(id) {
       <div class="detail-item"><span>${t("beneficiary")}</span><strong>${beneficiaryName(op.beneficiary_id)}</strong></div>
       <div class="detail-item"><span>USD</span><strong class="${Number(op.usd_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.usd_amount, "USD")}</strong></div>
       <div class="detail-item"><span>VES</span><strong class="${Number(op.ves_amount) < 0 ? "amount-negative" : "amount-positive"}">${money(op.ves_amount, "VES")}</strong></div>
+      <div class="detail-item"><span>${t("managementFee")}</span><strong>${Number(op.management_fee_amount || 0) ? `${money(op.management_fee_amount, "USD")} · ${money(op.management_fee_percent)}%` : "—"}</strong></div>
       <div class="detail-item"><span>${t("bankFeeAmount")}</span><strong>${Number(op.bank_fee_amount || 0) ? `${money(op.bank_fee_amount, "VES")} · ${money(op.bank_fee_percent)}%` : "—"}</strong></div>
       <div class="detail-item"><span>${t("account")}</span><strong>${accountName(op.source_account_id || op.destination_account_id)}</strong></div>
     </div>

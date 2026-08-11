@@ -656,9 +656,13 @@ input[readonly] {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: minmax(86px, 0.62fr) repeat(6, minmax(0, 1fr));
   gap: 10px;
   align-items: stretch;
+}
+
+.count-metric {
+  padding-inline: 10px;
 }
 
 .dashboard-section {
@@ -738,7 +742,7 @@ input[readonly] {
   line-height: 1.12;
 }
 
-.summary-grid .metric-card:not(.rate-metric) strong {
+.summary-grid .metric-card:not(.rate-metric):not(.count-metric) strong {
   font-size: clamp(1.28rem, 1.5vw, 1.58rem);
 }
 
@@ -963,7 +967,7 @@ input[readonly] {
 
 .dashboard-summary-table th,
 .dashboard-summary-table td {
-  padding: 12px 10px;
+  padding: 12px 8px;
   white-space: normal;
 }
 
@@ -980,7 +984,22 @@ input[readonly] {
 .dashboard-summary-table td strong,
 .dashboard-summary-table .amount-positive,
 .dashboard-summary-table .amount-negative {
-  font-size: clamp(0.88rem, 1.18vw, 1.08rem);
+  font-size: clamp(0.82rem, 1.06vw, 1.02rem);
+}
+
+.management-fee-row {
+  color: var(--muted);
+  background: rgba(88, 198, 228, 0.05);
+}
+
+.management-fee-row td {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  font-size: 0.8rem;
+}
+
+.management-fee-row strong {
+  color: var(--ink-2);
 }
 
 .bar-chart,

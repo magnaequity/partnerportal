@@ -277,6 +277,8 @@ def init_db():
           rate real,
           bank_fee_percent real default 0,
           bank_fee_amount real default 0,
+          management_fee_percent real default 0,
+          management_fee_amount real default 0,
           source_account_id text,
           destination_account_id text,
           beneficiary_id text,
@@ -325,6 +327,8 @@ def init_db():
     add_column_if_missing(conn, "operations", "ves_amount", "real default 0")
     add_column_if_missing(conn, "operations", "bank_fee_percent", "real default 0")
     add_column_if_missing(conn, "operations", "bank_fee_amount", "real default 0")
+    add_column_if_missing(conn, "operations", "management_fee_percent", "real default 0")
+    add_column_if_missing(conn, "operations", "management_fee_amount", "real default 0")
     add_column_if_missing(conn, "operations", "binance_rate", "real default 0")
     add_column_if_missing(conn, "operations", "spread", "real default 0")
     add_column_if_missing(conn, "operations", "executed_at", "text")
@@ -395,6 +399,8 @@ def seed_db():
         ("rate_expiration_minutes", "7", ts),
         ("binance_range_percent", "1", ts),
         ("binance_fee_percent", "0", ts),
+        ("buy_management_fee_percent", "0", ts),
+        ("sell_management_fee_percent", "0", ts),
         ("buy_statuses", "draft,pending_approval,approved,rejected,expired,executed,completed", ts),
         ("sell_statuses", "pending_master,in_negotiation,rate_pending_approval,approved,rejected,expired,executed,completed", ts),
         ("payment_statuses", "draft,pending_funding,funded,in_process,paid,completed,rejected,cancelled", ts),
@@ -855,6 +861,15 @@ def bank_fee_for_operation(op_type, ves_amount, source_account_id=None, destinat
     return fee_percent, fee_amount
 
 
+def management_fee_for_operation(op_type, usd_amount):
+    if op_type not in ("buy_usd", "sell_usd"):
+        return Decimal("0"), Decimal("0")
+    setting_key = "buy_management_fee_percent" if op_type == "buy_usd" else "sell_management_fee_percent"
+    fee_percent = Decimal(str(get_setting(setting_key, "0") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    fee_amount = (abs(Decimal(str(usd_amount or 0))) * fee_percent / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return fee_percent, fee_amount
+
+
 def decimal_setting(key, default="0"):
     return Decimal(str(get_setting(key, default) or default))
 
@@ -1027,6 +1042,7 @@ def set_operation_rate(operation_id):
     effective_source_account_id = source_account_id or op.get("source_account_id")
     effective_destination_account_id = destination_account_id or op.get("destination_account_id")
     bank_fee_percent, bank_fee_amount = bank_fee_for_operation(op["type"], ves_amount, effective_source_account_id, effective_destination_account_id)
+    management_fee_percent, management_fee_amount = management_fee_for_operation(op["type"], usd_amount)
     metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
     metadata["binance_snapshot"] = {
         "reference_rate": money(binance_rate),
@@ -1045,6 +1061,7 @@ def set_operation_rate(operation_id):
             source_account_id = coalesce(?, source_account_id),
             destination_account_id = coalesce(?, destination_account_id),
             usd_amount = ?, ves_amount = ?, bank_fee_percent = ?, bank_fee_amount = ?,
+            management_fee_percent = ?, management_fee_amount = ?,
             metadata = ?, expires_at = ?, updated_at = ?
         where id = ?
         """,
@@ -1058,6 +1075,8 @@ def set_operation_rate(operation_id):
             money(ves_amount),
             money(bank_fee_percent),
             money(bank_fee_amount),
+            money(management_fee_percent),
+            money(management_fee_amount),
             json.dumps(metadata),
             expires_at,
             now_iso(),
@@ -1260,6 +1279,7 @@ def execute_operation(operation_id):
         usd_amount = money(op.get("usd_amount") or 0)
         ves_amount = money(op.get("ves_amount") or 0)
     bank_fee_percent, bank_fee_amount = bank_fee_for_operation(op["type"], ves_amount, source_account, destination_account)
+    management_fee_percent, management_fee_amount = management_fee_for_operation(op["type"], usd_amount)
     allocations = []
     if op["type"] == "sell_usd":
         allocation_items = metadata_value(op, "payment_allocations", [])
@@ -1276,6 +1296,7 @@ def execute_operation(operation_id):
         update operations
         set status = 'completed', source_account_id = ?, destination_account_id = ?,
             usd_amount = ?, ves_amount = ?, bank_fee_percent = ?, bank_fee_amount = ?,
+            management_fee_percent = ?, management_fee_amount = ?,
             executed_at = ?, updated_at = ?
         where id = ?
         """,
@@ -1286,6 +1307,8 @@ def execute_operation(operation_id):
             ves_amount,
             money(bank_fee_percent),
             money(bank_fee_amount),
+            money(management_fee_percent),
+            money(management_fee_amount),
             now_iso(),
             now_iso(),
             operation_id,
