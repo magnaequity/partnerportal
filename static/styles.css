@@ -101,6 +101,10 @@ button {
   align-items: center;
 }
 
+.row-actions {
+  gap: 6px;
+}
+
 .landing-header {
   justify-content: space-between;
   position: relative;
@@ -579,6 +583,15 @@ input[readonly] {
 
 .subtle {
   color: var(--muted);
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  text-decoration: none;
+  font-size: 0.88rem;
 }
 
 .actor-pill {
@@ -1139,6 +1152,15 @@ body.dark-mode .file-preview-image {
   background: #0a202b;
 }
 
+body.dark-mode .currency-chip {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.dark-mode .currency-chip button {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .bar-track::before {
   content: "";
   position: absolute;
@@ -1280,6 +1302,56 @@ th {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   background: rgba(247, 251, 252, 0.82);
+}
+
+.settings-subsection {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-subsection h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.currency-manager {
+  display: grid;
+  gap: 10px;
+}
+
+.currency-chip-list,
+.currency-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.currency-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.currency-chip button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(8, 44, 58, 0.08);
+}
+
+.currency-add-row input {
+  max-width: 160px;
 }
 
 tbody tr {

@@ -87,6 +87,7 @@ const labels = {
     cancel: "Cancelar",
     save: "Guardar",
     view: "Ver",
+    report: "Reporte",
     close: "Cerrar",
     execute: "Ejecutar",
     closeOperation: "Completar operación",
@@ -161,7 +162,13 @@ const labels = {
     accountNumber: "Número de cuenta",
     accountType: "Tipo cuenta",
     identification: "Identificación",
-    currency: "Currency",
+    currency: "Moneda",
+    currencies: "Currencies",
+    currenciesHelp: "Agrega, edita o elimina las monedas disponibles para cuentas y beneficiarios.",
+    addCurrency: "Agregar currency",
+    reportLanguage: "Idioma reporte PDF",
+    reportLanguageEs: "Español",
+    reportLanguageEn: "Inglés",
     externalLink: "Link externo",
     notes: "Notas",
     client: "Cliente",
@@ -302,6 +309,7 @@ const labels = {
     cancel: "Cancel",
     save: "Save",
     view: "View",
+    report: "Report",
     close: "Close",
     execute: "Execute",
     closeOperation: "Complete transaction",
@@ -377,6 +385,12 @@ const labels = {
     accountType: "Account type",
     identification: "Identification",
     currency: "Currency",
+    currencies: "Currencies",
+    currenciesHelp: "Add, edit or remove the currencies available for accounts and beneficiaries.",
+    addCurrency: "Add currency",
+    reportLanguage: "PDF report language",
+    reportLanguageEs: "Spanish",
+    reportLanguageEn: "English",
     externalLink: "External link",
     notes: "Notes",
     client: "Client",
@@ -504,6 +518,31 @@ function applyTheme() {
 function money(value, currency = "") {
   const formatted = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
   return currency ? `${formatted} ${currency}` : formatted;
+}
+
+function normalizeCurrency(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function configuredCurrencies(extra = "") {
+  const raw = state.data?.settings?.currencies || "USD,VES";
+  const currencies = raw.split(",").map(normalizeCurrency).filter(Boolean);
+  ["USD", "VES", normalizeCurrency(extra)].filter(Boolean).forEach((currency) => {
+    if (!currencies.includes(currency)) currencies.push(currency);
+  });
+  return currencies;
+}
+
+function currencyOptions(selected = "") {
+  const current = normalizeCurrency(selected);
+  return configuredCurrencies(current)
+    .map((currency) => `<option value="${currency}" ${currency === current ? "selected" : ""}>${currency}</option>`)
+    .join("");
+}
+
+function reportUrl(opId) {
+  const params = new URLSearchParams({ user_id: state.userId, role: state.role });
+  return `/api/operations/${opId}/report?${params.toString()}`;
 }
 
 function binanceSnapshot(op) {
@@ -1394,6 +1433,7 @@ function renderOperations() {
 
 function operationTable(ops, actions = true) {
   const colSpan = actions ? 12 : 11;
+  const canReport = (op) => ["completed", "executed"].includes(op.status);
   const feeRow = (op) => Number(op.management_fee_amount || 0)
     ? `
       <tr class="management-fee-row" data-open-operation="${op.id}">
@@ -1439,7 +1479,10 @@ function operationTable(ops, actions = true) {
               <td><span class="status ${statusClass(op.status)}">${op.status}</span></td>
               <td>${accountName(op.source_account_id || op.destination_account_id)}</td>
               <td>${new Date(op.created_at).toLocaleDateString()}</td>
-              ${actions ? `<td><button class="subtle" data-open-operation="${op.id}" type="button">${t("view")}</button></td>` : ""}
+              ${actions ? `<td class="row-actions">
+                <button class="subtle" data-open-operation="${op.id}" type="button">${t("view")}</button>
+                ${canReport(op) ? `<a class="subtle button-link" data-download-report href="${reportUrl(op.id)}" target="_blank" rel="noreferrer">${t("report")}</a>` : ""}
+              </td>` : ""}
             </tr>
             ${feeRow(op)}
           `).join("") || `<tr><td colspan="${colSpan}" class="muted">${t("noOperations")}</td></tr>`}
@@ -1552,6 +1595,37 @@ function categoriesTable() {
   `;
 }
 
+function currenciesManagerMarkup() {
+  const currencies = configuredCurrencies();
+  return `
+    <div class="currency-manager full" data-currency-manager>
+      <input type="hidden" name="currencies" value="${currencies.join(",")}" data-currencies-value />
+      <div class="currency-chip-list" data-currency-chip-list>
+        ${currencies.map((currency) => `
+          <span class="currency-chip" data-currency-chip="${currency}">
+            ${currency}
+            <button type="button" data-remove-currency="${currency}" aria-label="${t("remove")} ${currency}">×</button>
+          </span>
+        `).join("")}
+      </div>
+      <div class="currency-add-row">
+        <input data-new-currency placeholder="USDT" maxlength="8" />
+        <button class="subtle" data-add-currency type="button">${t("addCurrency")}</button>
+      </div>
+      <p class="muted">${t("currenciesHelp")}</p>
+    </div>
+  `;
+}
+
+function syncCurrencyManager(form) {
+  const manager = form?.querySelector("[data-currency-manager]");
+  if (!manager) return;
+  const chips = [...manager.querySelectorAll("[data-currency-chip]")].map((chip) => chip.dataset.currencyChip);
+  const unique = [...new Set(chips.map(normalizeCurrency).filter(Boolean))];
+  const hidden = manager.querySelector("[data-currencies-value]");
+  if (hidden) hidden.value = unique.join(",");
+}
+
 function renderSettings() {
   qs("#viewBody").innerHTML = `
     <section class="settings-stack">
@@ -1573,6 +1647,16 @@ function renderSettings() {
           <label>${t("binanceFeePercent")}<input name="binance_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.binance_fee_percent || 0}" /></label>
           <label>${t("buyManagementFeePercent")}<input name="buy_management_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.buy_management_fee_percent || 0}" /></label>
           <label>${t("sellManagementFeePercent")}<input name="sell_management_fee_percent" type="number" min="0" max="20" step="0.01" value="${state.data.settings.sell_management_fee_percent || 0}" /></label>
+          <label>${t("reportLanguage")}
+            <select name="trade_report_language">
+              <option value="en" ${state.data.settings.trade_report_language !== "es" ? "selected" : ""}>${t("reportLanguageEn")}</option>
+              <option value="es" ${state.data.settings.trade_report_language === "es" ? "selected" : ""}>${t("reportLanguageEs")}</option>
+            </select>
+          </label>
+          <div class="full settings-subsection">
+            <h3>${t("currencies")}</h3>
+            ${currenciesManagerMarkup()}
+          </div>
           <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
         </form>
       </article>
@@ -1863,7 +1947,7 @@ function openAccountModal(owner, account = {}) {
     <form data-account-form="${account.id || ""}" class="form-grid">
       <input type="hidden" name="owner" value="${owner || account.owner || "magna"}" />
       <label>${t("name")}<input name="name" value="${account.name || ""}" required /></label>
-      <label>${t("currency")}<select name="currency"><option ${account.currency === "USD" ? "selected" : ""}>USD</option><option ${account.currency !== "USD" ? "selected" : ""}>VES</option></select></label>
+      <label>${t("currency")}<select name="currency">${currencyOptions(account.currency || "VES")}</select></label>
       <label>${t("bankPlatform")}<input name="institution" value="${account.institution || ""}" /></label>
       <label>${t("accountNumber")}<input name="account_number" value="${account.account_number || ""}" /></label>
       <label>${t("holder")}<input name="beneficiary_name" value="${account.beneficiary_name || ""}" /></label>
@@ -1885,7 +1969,7 @@ function openBeneficiaryModal(item = {}) {
       <label>${t("bankPlatform")}<input name="bank" value="${item.bank || ""}" /></label>
       <label>${t("accountNumber")}<input name="account_number" value="${item.account_number || ""}" /></label>
       <label>${t("accountType")}<input name="account_type" value="${item.account_type || "corriente"}" /></label>
-      <label>${t("currency")}<select name="currency"><option ${item.currency === "USD" ? "selected" : ""}>USD</option><option ${item.currency !== "USD" ? "selected" : ""}>VES</option></select></label>
+      <label>${t("currency")}<select name="currency">${currencyOptions(item.currency || "VES")}</select></label>
       <label class="full">${t("identification")}<input name="identification" value="${item.identification || ""}" /></label>
       <div class="full"><button class="primary" type="submit">${t("save")}</button></div>
     </form>
@@ -2182,6 +2266,10 @@ document.addEventListener("click", async (event) => {
     openOperationDetail(notificationOp.dataset.notificationOp);
     return;
   }
+  if (event.target.closest("[data-download-report]")) {
+    event.stopPropagation();
+    return;
+  }
   if (event.target.closest("[data-action='open-treasury']") && state.role !== "magna_admin") openTreasuryModal();
   if (event.target.closest("[data-action='new-account']")) openAccountModal(event.target.closest("[data-action]").dataset.owner);
   if (event.target.closest("[data-action='new-beneficiary']")) openBeneficiaryModal();
@@ -2230,6 +2318,35 @@ document.addEventListener("click", async (event) => {
   if (deleteUser && confirm(t("deleteUserConfirm"))) await api(`/api/users/${deleteUser.dataset.deleteUser}`, { method: "DELETE" }), await load();
   const deleteCategory = event.target.closest("[data-delete-category]");
   if (deleteCategory && confirm(t("deleteCategoryConfirm"))) await api(`/api/categories/${deleteCategory.dataset.deleteCategory}`, { method: "DELETE" }), await load();
+
+  const addCurrency = event.target.closest("[data-add-currency]");
+  if (addCurrency) {
+    const manager = addCurrency.closest("[data-currency-manager]");
+    const input = manager?.querySelector("[data-new-currency]");
+    const currency = normalizeCurrency(input?.value);
+    const list = manager?.querySelector("[data-currency-chip-list]");
+    if (currency && list && !manager.querySelector(`[data-currency-chip="${currency}"]`)) {
+      list.insertAdjacentHTML("beforeend", `
+        <span class="currency-chip" data-currency-chip="${currency}">
+          ${currency}
+          <button type="button" data-remove-currency="${currency}" aria-label="${t("remove")} ${currency}">×</button>
+        </span>
+      `);
+      input.value = "";
+      syncCurrencyManager(manager.closest("form"));
+    }
+    return;
+  }
+  const removeCurrency = event.target.closest("[data-remove-currency]");
+  if (removeCurrency) {
+    const manager = removeCurrency.closest("[data-currency-manager]");
+    const chips = manager?.querySelectorAll("[data-currency-chip]");
+    if (chips && chips.length > 1) {
+      removeCurrency.closest("[data-currency-chip]")?.remove();
+      syncCurrencyManager(manager.closest("form"));
+    }
+    return;
+  }
 
   const statusOp = event.target.closest("[data-status-op]");
   if (statusOp) {
@@ -2420,6 +2537,7 @@ document.addEventListener("submit", async (event) => {
     }
     if (form.matches("[data-settings-form]")) {
       event.preventDefault();
+      syncCurrencyManager(form);
       await submitJson("/api/settings", "POST", form);
     }
   } catch (error) {

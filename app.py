@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import uuid
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -11,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -43,6 +44,7 @@ BINANCE_RATE_URL = "https://consulta-rates.insularcambios.com/v1/tasas/binance"
 RATE_EDITABLE_STATUSES = ("pending_master", "in_negotiation", "rate_pending_approval", "expired")
 UNASSIGNED_USE = "unassigned_use"
 INCREASE_POSITION_USE = "increase_position"
+DEFAULT_CURRENCIES = ("USD", "VES")
 INITIAL_PASSWORD_ENVS = {
     "usr-magna-admin": "MAGNA_ADMIN_PASSWORD",
     "usr-yango-super": "YANGO_APPROVER_PASSWORD",
@@ -164,6 +166,26 @@ def set_setting(key, value):
         """,
         (key, str(value), now_iso()),
     )
+
+
+def normalize_currency(value, default="VES"):
+    cleaned = "".join(ch for ch in str(value or default).upper().strip() if ch.isalnum())
+    return cleaned or default
+
+
+def normalize_currency_list(value):
+    seen = set()
+    currencies = []
+    for item in str(value or "").replace("\n", ",").split(","):
+        currency = normalize_currency(item, "")
+        if currency and currency not in seen:
+            seen.add(currency)
+            currencies.append(currency)
+    for currency in DEFAULT_CURRENCIES:
+        if currency not in seen:
+            currencies.append(currency)
+            seen.add(currency)
+    return ",".join(currencies)
 
 
 def add_column_if_missing(conn, table, column, definition):
@@ -401,6 +423,8 @@ def seed_db():
         ("binance_fee_percent", "0", ts),
         ("buy_management_fee_percent", "0", ts),
         ("sell_management_fee_percent", "0", ts),
+        ("trade_report_language", "en", ts),
+        ("currencies", "USD,VES", ts),
         ("buy_statuses", "draft,pending_approval,approved,rejected,expired,executed,completed", ts),
         ("sell_statuses", "pending_master,in_negotiation,rate_pending_approval,approved,rejected,expired,executed,completed", ts),
         ("payment_statuses", "draft,pending_funding,funded,in_process,paid,completed,rejected,cancelled", ts),
@@ -623,7 +647,7 @@ def account_payload(data, owner):
         data.get("account_number", ""),
         data.get("beneficiary_name", data.get("holder", "")),
         data.get("account_type", "bank"),
-        data.get("currency", "VES"),
+        normalize_currency(data.get("currency", "VES")),
         data.get("wallet_address", ""),
         money(data.get("bank_fee_percent", 0)),
         money(data.get("balance", data.get("initial_balance", 0))),
@@ -712,7 +736,7 @@ def create_beneficiary():
             data.get("account_number", ""),
             data.get("account_type", "corriente"),
             data.get("identification", ""),
-            data.get("currency", "VES"),
+            normalize_currency(data.get("currency", "VES")),
             now_iso(),
         ),
     )
@@ -739,7 +763,7 @@ def update_beneficiary(beneficiary_id):
             data.get("account_number", ""),
             data.get("account_type", "corriente"),
             data.get("identification", ""),
-            data.get("currency", "VES"),
+            normalize_currency(data.get("currency", "VES")),
             data.get("status", "active"),
             beneficiary_id,
         ),
@@ -1337,6 +1361,468 @@ def complete_operation(operation_id):
     return jsonify({"error": "Completa la operacion cargando los soportes requeridos desde el flujo de completar."}), 400
 
 
+REPORT_LABELS = {
+    "en": {
+        "title": "Trade Report",
+        "subtitle": "Automated transaction report prepared from Partner Portal records.",
+        "completed": "COMPLETED",
+        "category": "Category",
+        "partner": "Partner",
+        "usage": "Use",
+        "executed_rate": "Executed rate",
+        "binance": "Binance",
+        "spread": "Spread vs Binance",
+        "management_fee": "Management Fee",
+        "narrative": "Executive Narrative",
+        "settlement": "Settlement Accounts",
+        "timeline": "Audit Timeline",
+        "role": "Role",
+        "account": "Account",
+        "institution": "Institution / Platform",
+        "currency": "Currency",
+        "holder": "Holder",
+        "source": "Source",
+        "destination": "Destination",
+        "time": "Time",
+        "event": "Event",
+        "comment": "Comment",
+        "footer": "Magna Equity - Confidential Trade Report",
+        "buy_usd": "Buy USD",
+        "sell_usd": "Sell USD",
+        "payment": "Payment",
+        "not_available": "not available",
+        "created_request": "created a treasury request for",
+        "loaded_rate": "Magna Equity loaded an execution rate of",
+        "compared": "compared against a Binance reference of",
+        "recorded_spread": "resulting in a recorded spread of",
+        "approved": "The client approved the rate on",
+        "completed_on": "The transaction was completed on",
+        "support_registered": "with support documentation registered in the portal.",
+        "generated": "Generated",
+        "operation": "Operation",
+        "on": "On",
+    },
+    "es": {
+        "title": "Reporte de Trade",
+        "subtitle": "Reporte automatico preparado desde los registros del Partner Portal.",
+        "completed": "COMPLETADA",
+        "category": "Categoria",
+        "partner": "Partner",
+        "usage": "Uso",
+        "executed_rate": "Tasa ejecutada",
+        "binance": "Binance",
+        "spread": "Spread vs Binance",
+        "management_fee": "Management Fee",
+        "narrative": "Resumen Ejecutivo",
+        "settlement": "Cuentas de Liquidacion",
+        "timeline": "Timeline de Auditoria",
+        "role": "Rol",
+        "account": "Cuenta",
+        "institution": "Banco / Plataforma",
+        "currency": "Moneda",
+        "holder": "Titular",
+        "source": "Salida",
+        "destination": "Entrada",
+        "time": "Hora",
+        "event": "Evento",
+        "comment": "Comentario",
+        "footer": "Magna Equity - Reporte confidencial de trade",
+        "buy_usd": "Compra USD",
+        "sell_usd": "Venta USD",
+        "payment": "Pago",
+        "not_available": "no disponible",
+        "created_request": "creo una solicitud de tesoreria para",
+        "loaded_rate": "Magna Equity cargo una tasa ejecutada de",
+        "compared": "comparada contra una referencia Binance de",
+        "recorded_spread": "dejando un spread registrado de",
+        "approved": "El cliente aprobo la tasa el",
+        "completed_on": "La transaccion fue completada el",
+        "support_registered": "con soportes documentales registrados en el portal.",
+        "generated": "Generado",
+        "operation": "Operacion",
+        "on": "El",
+    },
+}
+
+
+def report_language():
+    language = get_setting("trade_report_language", "en")
+    return language if language in REPORT_LABELS else "en"
+
+
+def report_type_label(op_type, language):
+    return REPORT_LABELS[language].get(op_type, op_type or "-")
+
+
+def report_datetime(value):
+    if not value:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=-4)))
+    except ValueError:
+        return "-"
+    return dt.strftime("%d %b %Y, %I:%M %p VET")
+
+
+def report_money(value, currency="", signed=False):
+    decimal = Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    prefix = "+" if signed and decimal > 0 else ""
+    suffix = f" {currency}" if currency else ""
+    return f"{prefix}{decimal:,.2f}{suffix}"
+
+
+def report_percent(value):
+    return f"{Decimal(str(value or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}%"
+
+
+def report_account_amounts(op, account):
+    currency = (account or {}).get("currency")
+    usd_amount = Decimal("0")
+    ves_amount = Decimal("0")
+    if currency == "USD":
+        usd_amount = Decimal(str(op.get("usd_amount") or 0))
+    if currency == "VES":
+        ves_amount = Decimal(str(op.get("ves_amount") or 0))
+    return usd_amount, ves_amount
+
+
+def append_pdf_attachments(writer, attachments):
+    from pypdf import PdfReader
+
+    for attachment in attachments:
+        stored_path = attachment.get("stored_path")
+        if not stored_path:
+            continue
+        file_path = UPLOAD_DIR / stored_path
+        if not file_path.exists():
+            continue
+        content_type = attachment.get("content_type") or mimetypes.guess_type(attachment.get("filename") or "")[0] or ""
+        try:
+            if "pdf" in content_type.lower() or file_path.suffix.lower() == ".pdf":
+                with file_path.open("rb") as stream:
+                    if stream.read(4) != b"%PDF":
+                        continue
+                reader = PdfReader(str(file_path))
+                for page in reader.pages:
+                    writer.add_page(page)
+            elif content_type.lower().startswith("image/") or file_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                if not valid_report_image(file_path):
+                    continue
+                image_pdf = BytesIO()
+                draw_attachment_image_page(image_pdf, attachment, file_path)
+                image_pdf.seek(0)
+                reader = PdfReader(image_pdf)
+                for page in reader.pages:
+                    writer.add_page(page)
+        except Exception:
+            continue
+
+
+def valid_report_image(file_path):
+    try:
+        from PIL import Image
+
+        with Image.open(file_path) as image:
+            image.verify()
+        return True
+    except Exception:
+        return False
+
+
+def draw_attachment_image_page(buffer, attachment, file_path):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    navy = colors.HexColor("#082C3A")
+    cyan = colors.HexColor("#58C6E4")
+    muted = colors.HexColor("#6B7F89")
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    margin = 42
+    c.setFillColor(navy)
+    c.rect(0, height - 72, width, 72, fill=1, stroke=0)
+    c.setFillColor(cyan)
+    c.rect(margin, height - 88, width - margin * 2, 3, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawRightString(width - margin, height - 35, attachment.get("label") or "Support Documentation")
+    c.setFillColor(muted)
+    c.setFont("Helvetica", 8)
+    c.drawString(margin, height - 118, attachment.get("filename") or "")
+    try:
+        c.drawImage(str(file_path), margin, 90, width=width - margin * 2, height=height - 230, preserveAspectRatio=True, anchor="c", mask="auto")
+    except Exception:
+        c.setFillColor(muted)
+        c.drawString(margin, height / 2, "Image preview unavailable.")
+    c.showPage()
+    c.save()
+
+
+def generate_trade_report(operation_id):
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Paragraph, Table, TableStyle
+
+    op = operation_payload(operation_id)
+    if not op:
+        return None, "Operacion no encontrada."
+    if op["status"] not in ("completed", "executed"):
+        return None, "Solo se pueden generar reportes de operaciones completadas."
+
+    language = report_language()
+    labels = REPORT_LABELS[language]
+    metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
+    partner = row_to_dict(query("select * from partners where id = ?", (op["partner_id"],), one=True)) or {}
+    creator = row_to_dict(query("select * from users where id = ?", (op.get("created_by"),), one=True)) or {}
+    source_account = row_to_dict(query("select * from accounts where id = ?", (op.get("source_account_id"),), one=True)) or {}
+    destination_account = row_to_dict(query("select * from accounts where id = ?", (op.get("destination_account_id"),), one=True)) or {}
+    category = row_to_dict(query("select * from categories where id = ?", (metadata.get("usage_category_id"),), one=True)) or {}
+    events = op.get("events") or []
+    attachments = op.get("attachments") or []
+    approval_event = next((event for event in events if event.get("event_type") == "approved"), None)
+    execution_event = next((event for event in events if event.get("event_type") in ("completed", "executed")), None)
+
+    navy = colors.HexColor("#082C3A")
+    teal = colors.HexColor("#1FA4C4")
+    cyan = colors.HexColor("#58C6E4")
+    gold = colors.HexColor("#F5B700")
+    green = colors.HexColor("#198F5B")
+    red = colors.HexColor("#BE3548")
+    muted = colors.HexColor("#6B7F89")
+    border = colors.HexColor("#D8E5EA")
+    soft = colors.HexColor("#F5FAFC")
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    margin = 42
+    styles = getSampleStyleSheet()
+    body_style = ParagraphStyle("ReportBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=8.6, leading=12, textColor=navy)
+
+    def draw_header():
+        c.setFillColor(colors.white)
+        c.rect(0, 0, width, height, fill=1, stroke=0)
+        watermark = BASE_DIR / "static/assets/magna-watermark.jpg"
+        if watermark.exists():
+            c.saveState()
+            c.setFillAlpha(0.055)
+            c.drawImage(str(watermark), width - 190, height - 235, width=145, height=240, mask="auto", preserveAspectRatio=True)
+            c.restoreState()
+        c.setFillColor(navy)
+        c.rect(0, height - 72, width, 72, fill=1, stroke=0)
+        c.setFillColor(teal)
+        c.rect(0, height - 72, 16, 72, fill=1, stroke=0)
+        c.setFillColor(cyan)
+        c.rect(16, height - 72, 6, 72, fill=1, stroke=0)
+        c.setFillColor(gold)
+        c.rect(22, height - 72, 3, 72, fill=1, stroke=0)
+        logo = BASE_DIR / "static/assets/magna-logo.jpg"
+        if logo.exists():
+            c.drawImage(str(logo), margin, height - 55, width=104, height=46, preserveAspectRatio=True, mask="auto")
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawRightString(width - margin, height - 35, labels["title"])
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#CDEDF6"))
+        generated_at = datetime.now(timezone(timedelta(hours=-4))).strftime("%d %b %Y, %I:%M %p VET")
+        c.drawRightString(width - margin, height - 50, f"{labels['operation']} {op['id']} - {labels['generated']} {generated_at}")
+        c.setFillColor(cyan)
+        c.rect(margin, height - 88, width - margin * 2, 3, fill=1, stroke=0)
+
+    def draw_footer():
+        c.setStrokeColor(border)
+        c.line(margin, 34, width - margin, 34)
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 7)
+        c.drawString(margin, 22, labels["footer"])
+        c.drawRightString(width - margin, 22, "Page 1")
+
+    def draw_card(x, y, label, value, card_width, color=navy):
+        c.setFillColor(soft)
+        c.roundRect(x, y - 45, card_width, 45, 8, fill=1, stroke=0)
+        c.setStrokeColor(border)
+        c.roundRect(x, y - 45, card_width, 45, 8, fill=0, stroke=1)
+        c.setFillColor(muted)
+        c.setFont("Helvetica-Bold", 6.8)
+        c.drawString(x + 10, y - 15, label.upper())
+        c.setFillColor(color)
+        c.setFont("Helvetica-Bold", 10.2)
+        text = str(value or "-")
+        if stringWidth(text, "Helvetica-Bold", 10.2) > card_width - 20:
+            c.setFont("Helvetica-Bold", 8.6)
+        c.drawString(x + 10, y - 32, text)
+
+    def draw_cards(y, cards):
+        gap = 10
+        card_width = (width - margin * 2 - gap * 2) / 3
+        for idx, card in enumerate(cards):
+            draw_card(margin + idx * (card_width + gap), y, card[0], card[1], card_width, card[2] if len(card) > 2 else navy)
+
+    def draw_paragraph(text, x, y, paragraph_width):
+        paragraph = Paragraph(text, body_style)
+        _, paragraph_height = paragraph.wrap(paragraph_width, 500)
+        paragraph.drawOn(c, x, y - paragraph_height)
+        return y - paragraph_height
+
+    spread = Decimal(str(op.get("spread") or 0))
+    binance_rate = Decimal(str(op.get("binance_rate") or 0))
+    range_pct = Decimal(str(get_setting("binance_range_percent", "1") or 1))
+    binance_status = "-"
+    if binance_rate:
+        binance_status = "OK" if abs(spread) <= range_pct else "NO OK"
+    status_label = labels["completed"] if op["status"] in ("completed", "executed") else str(op["status"]).upper()
+    usage = category.get("name") or metadata.get("usage_category_id") or "-"
+    if language == "en":
+        usage_map = {"Pago a partners": "Partner payment", "Pago a proveedor": "Provider payment", INCREASE_POSITION_USE: "Increase position", UNASSIGNED_USE: "Use not determined"}
+        usage = usage_map.get(usage, usage)
+
+    draw_header()
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(margin, height - 126, op["id"])
+    c.setFont("Helvetica", 8)
+    c.setFillColor(muted)
+    c.drawString(margin, height - 141, labels["subtitle"])
+    c.setFillColor(green)
+    c.roundRect(width - margin - 106, height - 137, 106, 24, 12, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(width - margin - 53, height - 129, status_label)
+
+    top = height - 181
+    draw_cards(top, [(labels["category"], report_type_label(op["type"], language)), (labels["partner"], partner.get("name", "-")), (labels["usage"], usage)])
+    top -= 55
+    draw_cards(
+        top,
+        [
+            ("USD", report_money(op.get("usd_amount"), "USD", True), red if Decimal(str(op.get("usd_amount") or 0)) < 0 else green),
+            ("VES", report_money(op.get("ves_amount"), "VES", True), green if Decimal(str(op.get("ves_amount") or 0)) >= 0 else red),
+            (labels["executed_rate"], report_money(op.get("rate"))),
+        ],
+    )
+    top -= 55
+    draw_cards(
+        top,
+        [
+            (labels["binance"], report_money(op.get("binance_rate")) if binance_rate else "-"),
+            (labels["spread"], f"{report_percent(op.get('spread'))} / {binance_status}", green if binance_status == "OK" else red if binance_status == "NO OK" else navy),
+            (labels["management_fee"], f"{report_money(op.get('management_fee_amount'), 'USD')} ({report_percent(op.get('management_fee_percent'))})"),
+        ],
+    )
+    top -= 66
+
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(margin, top, labels["narrative"])
+    top -= 9
+    reference_rate = report_money(op.get("binance_rate")) if binance_rate else labels["not_available"]
+    narrative = (
+        f"{labels['on']} <b>{report_datetime(op.get('created_at'))}</b>, <b>{creator.get('name', 'Client')}</b> {labels['created_request']} "
+        f"<b>{report_type_label(op['type'], language)}</b>. {labels['loaded_rate']} <b>{report_money(op.get('rate'))}</b>, "
+        f"{labels['compared']} <b>{reference_rate}</b>, {labels['recorded_spread']} <b>{report_percent(op.get('spread'))}</b>. "
+        f"{labels['approved']} <b>{report_datetime(approval_event.get('created_at') if approval_event else None)}</b>. "
+        f"{labels['completed_on']} <b>{report_datetime(op.get('executed_at') or (execution_event.get('created_at') if execution_event else None))}</b>, "
+        f"{labels['support_registered']}"
+    )
+    top = draw_paragraph(narrative, margin, top, width - margin * 2) - 14
+
+    c.setFont("Helvetica-Bold", 11)
+    c.setFillColor(navy)
+    c.drawString(margin, top, labels["settlement"])
+    top -= 12
+    source_usd, source_ves = report_account_amounts(op, source_account)
+    destination_usd, destination_ves = report_account_amounts(op, destination_account)
+    account_data = [
+        [labels["role"], labels["account"], labels["institution"], labels["currency"], "USD", "VES", labels["holder"]],
+        [labels["source"], source_account.get("name", "-"), source_account.get("institution") or source_account.get("wallet_address") or "-", source_account.get("currency", "-"), report_money(source_usd, "USD", True), report_money(source_ves, "VES", True), source_account.get("beneficiary_name", "-")],
+        [labels["destination"], destination_account.get("name", "-"), destination_account.get("institution") or destination_account.get("wallet_address") or "-", destination_account.get("currency", "-"), report_money(destination_usd, "USD", True), report_money(destination_ves, "VES", True), destination_account.get("beneficiary_name", "-")],
+    ]
+    table = Table(account_data, colWidths=[50, 112, 112, 45, 70, 70, 58])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), navy),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.8),
+                ("TEXTCOLOR", (0, 1), (-1, -1), navy),
+                ("GRID", (0, 0), (-1, -1), 0.35, border),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    _, table_height = table.wrap(width - margin * 2, 100)
+    table.drawOn(c, margin, top - table_height)
+    top -= table_height + 18
+
+    c.setFont("Helvetica-Bold", 11)
+    c.setFillColor(navy)
+    c.drawString(margin, top, labels["timeline"])
+    top -= 12
+    rows = [[labels["time"], labels["event"], labels["comment"]]]
+    for event in events[:8]:
+        rows.append([report_datetime(event.get("created_at")), event.get("description", "-"), event.get("comment") or "-"])
+    timeline = Table(rows, colWidths=[106, 270, 114])
+    timeline.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF7FB")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), navy),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.6),
+                ("TEXTCOLOR", (0, 1), (-1, -1), navy),
+                ("GRID", (0, 0), (-1, -1), 0.3, border),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    _, timeline_height = timeline.wrap(width - margin * 2, 180)
+    timeline.drawOn(c, margin, max(52, top - timeline_height))
+    draw_footer()
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+
+    writer = PdfWriter()
+    reader = PdfReader(buffer)
+    for page in reader.pages:
+        writer.add_page(page)
+    append_pdf_attachments(writer, attachments)
+    output = BytesIO()
+    writer.write(output)
+    output.seek(0)
+    return output, None
+
+
+@app.get("/api/operations/<operation_id>/report")
+def download_operation_report(operation_id):
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    if error:
+        return error
+    report, report_error = generate_trade_report(operation_id)
+    if report_error:
+        return jsonify({"error": report_error}), 400
+    return send_file(
+        report,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"trade-report-{operation_id}.pdf",
+    )
+
+
 @app.post("/api/settings")
 def update_settings():
     user, error = require_roles(ROLE_MASTER)
@@ -1344,6 +1830,10 @@ def update_settings():
         return error
     data = parse_json()
     for key, value in data.items():
+        if key == "currencies":
+            value = normalize_currency_list(value)
+        if key == "trade_report_language":
+            value = value if value in ("es", "en") else "en"
         set_setting(key, value)
     return jsonify({"settings": {x["key"]: x["value"] for x in query("select * from settings")}})
 
