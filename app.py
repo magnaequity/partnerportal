@@ -1364,7 +1364,9 @@ def complete_operation(operation_id):
 REPORT_LABELS = {
     "en": {
         "title": "Trade Report",
+        "dashboard_title": "Operations Report",
         "subtitle": "Automated transaction report prepared from Partner Portal records.",
+        "dashboard_subtitle": "Automated dashboard report prepared from Partner Portal operations.",
         "completed": "COMPLETED",
         "category": "Category",
         "partner": "Partner",
@@ -1391,6 +1393,7 @@ REPORT_LABELS = {
         "event": "Event",
         "comment": "Comment",
         "footer": "Magna Equity - Confidential Trade Report",
+        "dashboard_footer": "Magna Equity - Confidential Operations Report",
         "buy_usd": "Buy USD",
         "sell_usd": "Sell USD",
         "payment": "Payment",
@@ -1406,10 +1409,37 @@ REPORT_LABELS = {
         "generated": "Generated",
         "operation": "Operation",
         "on": "On",
+        "period": "Period",
+        "granularity": "Granularity",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly",
+        "all_dates": "All dates",
+        "current_balances": "Current Balances",
+        "operating_summary": "Operating Summary",
+        "summary_table": "Period Summary",
+        "operations_count": "Operations",
+        "net_usd": "Net USD",
+        "net_ves": "Net VES",
+        "weighted_rate": "Weighted Rate",
+        "buy_rate": "Buy Rate",
+        "sell_rate": "Sell Rate",
+        "binance_ok": "Binance OK",
+        "weighted_spread": "Weighted Spread",
+        "buy_usd_total": "Buy USD",
+        "sell_usd_total": "Sell USD",
+        "partner_payments": "Partner Payments",
+        "provider_payments": "Provider Payments",
+        "date": "Date",
+        "qty": "Qty",
+        "dashboard_narrative": "During {period}, the portal recorded <b>{count}</b> operations, with net USD movement of <b>{net_usd}</b> and net VES movement of <b>{net_ves}</b>. Buy USD volume totaled <b>{buy_usd}</b>, Sell USD volume totaled <b>{sell_usd}</b>, and Management Fee totaled <b>{management_fee}</b>. Binance validation was OK for <b>{binance_ok}</b> of <b>{binance_total}</b> eligible FX operations.",
+        "table_limited": "Table limited to the latest {shown} periods to keep the report within two pages.",
     },
     "es": {
         "title": "Reporte de Trade",
+        "dashboard_title": "Reporte de Operaciones",
         "subtitle": "Reporte automatico preparado desde los registros del Partner Portal.",
+        "dashboard_subtitle": "Reporte automatico del dashboard preparado desde las operaciones del Partner Portal.",
         "completed": "COMPLETADA",
         "category": "Categoria",
         "partner": "Partner",
@@ -1436,6 +1466,7 @@ REPORT_LABELS = {
         "event": "Evento",
         "comment": "Comentario",
         "footer": "Magna Equity - Reporte confidencial de trade",
+        "dashboard_footer": "Magna Equity - Reporte confidencial de operaciones",
         "buy_usd": "Compra USD",
         "sell_usd": "Venta USD",
         "payment": "Pago",
@@ -1451,6 +1482,31 @@ REPORT_LABELS = {
         "generated": "Generado",
         "operation": "Operacion",
         "on": "El",
+        "period": "Periodo",
+        "granularity": "Granularidad",
+        "daily": "Diario",
+        "weekly": "Semanal",
+        "monthly": "Mensual",
+        "all_dates": "Todas las fechas",
+        "current_balances": "Saldos Actuales",
+        "operating_summary": "Resumen Operativo",
+        "summary_table": "Resumen por Periodo",
+        "operations_count": "Operaciones",
+        "net_usd": "USD Neto",
+        "net_ves": "VES Neto",
+        "weighted_rate": "Tasa Ponderada",
+        "buy_rate": "Tasa Compra",
+        "sell_rate": "Tasa Venta",
+        "binance_ok": "Binance OK",
+        "weighted_spread": "Spread Ponderado",
+        "buy_usd_total": "Compra USD",
+        "sell_usd_total": "Venta USD",
+        "partner_payments": "Pagos Partners",
+        "provider_payments": "Pagos Proveedores",
+        "date": "Fecha",
+        "qty": "Qty",
+        "dashboard_narrative": "Durante {period}, el portal registro <b>{count}</b> operaciones, con un movimiento neto en USD de <b>{net_usd}</b> y un movimiento neto en VES de <b>{net_ves}</b>. El volumen de Compra USD fue <b>{buy_usd}</b>, el volumen de Venta USD fue <b>{sell_usd}</b> y el Management Fee total fue <b>{management_fee}</b>. La validacion Binance estuvo OK en <b>{binance_ok}</b> de <b>{binance_total}</b> operaciones FX elegibles.",
+        "table_limited": "La tabla se limito a los ultimos {shown} periodos para mantener el reporte en maximo dos paginas.",
     },
 }
 
@@ -1483,6 +1539,197 @@ def report_money(value, currency="", signed=False):
 
 def report_percent(value):
     return f"{Decimal(str(value or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}%"
+
+
+def report_number(value):
+    return f"{Decimal(str(value or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}"
+
+
+def report_date_label(date_text, language, granularity="day"):
+    if not date_text:
+        return "-"
+    months = {
+        "en": ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+        "es": ("ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sep.", "oct.", "nov.", "dic."),
+    }
+    try:
+        parsed = datetime.fromisoformat(f"{date_text}T00:00:00")
+    except ValueError:
+        return date_text
+    month = months.get(language, months["en"])[parsed.month - 1]
+    if granularity == "month":
+        return f"{month} {parsed.year}"
+    if granularity == "week":
+        return f"{REPORT_LABELS[language]['weekly']} {parsed.day} {month}"
+    return f"{parsed.day} {month}"
+
+
+def report_period_start(date_text, granularity):
+    try:
+        parsed = datetime.fromisoformat(f"{date_text}T00:00:00")
+    except ValueError:
+        return date_text
+    if granularity == "month":
+        return f"{parsed.year}-{parsed.month:02d}-01"
+    if granularity == "week":
+        parsed = parsed - timedelta(days=parsed.weekday())
+    return parsed.strftime("%Y-%m-%d")
+
+
+def dashboard_date_range(filters):
+    preset = filters.get("date_preset") or ""
+    today = datetime.now(timezone(timedelta(hours=-4))).date()
+    start_of_week = today - timedelta(days=today.weekday())
+    if preset == "today":
+        return today.isoformat(), today.isoformat()
+    if preset == "yesterday":
+        yesterday = today - timedelta(days=1)
+        return yesterday.isoformat(), yesterday.isoformat()
+    if preset == "this_week":
+        return start_of_week.isoformat(), today.isoformat()
+    if preset == "previous_week":
+        start = start_of_week - timedelta(days=7)
+        return start.isoformat(), (start_of_week - timedelta(days=1)).isoformat()
+    if preset == "last_7_days":
+        return (today - timedelta(days=7)).isoformat(), today.isoformat()
+    if preset == "last_30_days":
+        return (today - timedelta(days=30)).isoformat(), today.isoformat()
+    if preset == "previous_month":
+        first_this_month = today.replace(day=1)
+        last_previous_month = first_this_month - timedelta(days=1)
+        first_previous_month = last_previous_month.replace(day=1)
+        return first_previous_month.isoformat(), last_previous_month.isoformat()
+    if preset == "last_3_months":
+        return (today - timedelta(days=92)).isoformat(), today.isoformat()
+    if preset == "last_12_months":
+        return (today - timedelta(days=365)).isoformat(), today.isoformat()
+    if preset == "custom":
+        return filters.get("date_from") or None, filters.get("date_to") or None
+    return None, None
+
+
+def dashboard_operation_date(op):
+    return str(op.get("executed_at") or op.get("created_at") or "")[:10]
+
+
+def dashboard_filtered_operations(filters):
+    date_from, date_to = dashboard_date_range(filters)
+    operations = [operation_payload(row["id"]) for row in query("select id from operations order by created_at desc")]
+    filtered = []
+    for op in operations:
+        op_date = dashboard_operation_date(op)
+        if date_from and op_date < date_from:
+            continue
+        if date_to and op_date > date_to:
+            continue
+        filtered.append(op)
+    return filtered, date_from, date_to
+
+
+def dashboard_binance_snapshot(op):
+    metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
+    return metadata.get("binance_snapshot") if isinstance(metadata.get("binance_snapshot"), dict) else {}
+
+
+def dashboard_stats(ops):
+    usd = sum(Decimal(str(op.get("usd_amount") or 0)) for op in ops)
+    ves = sum(Decimal(str(op.get("ves_amount") or 0)) for op in ops)
+    management_fee = sum(Decimal(str(op.get("management_fee_amount") or 0)) for op in ops)
+    buy_usd = sum(abs(Decimal(str(op.get("usd_amount") or 0))) for op in ops if op.get("type") == "buy_usd")
+    sell_usd = sum(abs(Decimal(str(op.get("usd_amount") or 0))) for op in ops if op.get("type") == "sell_usd")
+    rated = [op for op in ops if Decimal(str(op.get("rate") or 0)) and abs(Decimal(str(op.get("usd_amount") or 0)))]
+    buy_rated = [op for op in rated if op.get("type") == "buy_usd"]
+    sell_rated = [op for op in rated if op.get("type") == "sell_usd"]
+    binance_eligible = [op for op in ops if op.get("type") in ("buy_usd", "sell_usd") and Decimal(str(op.get("rate") or 0))]
+    binance_ok = sum(1 for op in binance_eligible if dashboard_binance_snapshot(op).get("within_range") is True)
+    binance_rated = [op for op in binance_eligible if Decimal(str(op.get("binance_rate") or dashboard_binance_snapshot(op).get("reference_rate") or 0)) and abs(Decimal(str(op.get("usd_amount") or 0)))]
+    spread_weight = sum(abs(Decimal(str(op.get("usd_amount") or 0))) for op in binance_rated)
+    weighted_spread_total = Decimal("0")
+    for op in binance_rated:
+        reference = Decimal(str(op.get("binance_rate") or dashboard_binance_snapshot(op).get("reference_rate") or 0))
+        rate = Decimal(str(op.get("rate") or 0))
+        spread = Decimal(str(op.get("spread") or (((rate - reference) / reference) * 100 if reference else 0)))
+        weighted_spread_total += spread * abs(Decimal(str(op.get("usd_amount") or 0)))
+
+    def weighted_rate(items):
+        weight = sum(abs(Decimal(str(op.get("usd_amount") or 0))) for op in items)
+        total = sum(Decimal(str(op.get("rate") or 0)) * abs(Decimal(str(op.get("usd_amount") or 0))) for op in items)
+        return total / weight if weight else Decimal("0")
+
+    return {
+        "count": len(ops),
+        "usd": usd,
+        "ves": ves,
+        "management_fee": management_fee,
+        "buy_usd": buy_usd,
+        "sell_usd": sell_usd,
+        "weighted": weighted_rate(rated),
+        "buy_weighted": weighted_rate(buy_rated),
+        "sell_weighted": weighted_rate(sell_rated),
+        "binance_eligible": len(binance_eligible),
+        "binance_ok": binance_ok,
+        "binance_ok_percent": (Decimal(binance_ok) / Decimal(len(binance_eligible)) * 100) if binance_eligible else None,
+        "weighted_spread": (weighted_spread_total / spread_weight) if spread_weight else None,
+    }
+
+
+def dashboard_rows_by_period(ops, granularity="day", limit=24):
+    periods = {}
+    for op in ops:
+        op_date = dashboard_operation_date(op)
+        if not op_date:
+            continue
+        period_date = report_period_start(op_date, granularity)
+        period = periods.setdefault(
+            period_date,
+            {
+                "date": period_date,
+                "count": 0,
+                "buy_usd": Decimal("0"),
+                "sell_usd": Decimal("0"),
+                "management_fee": Decimal("0"),
+                "partner_payments": Decimal("0"),
+                "provider_payments": Decimal("0"),
+                "buy_rate_total": Decimal("0"),
+                "buy_rate_weight": Decimal("0"),
+                "sell_rate_total": Decimal("0"),
+                "sell_rate_weight": Decimal("0"),
+            },
+        )
+        abs_usd = abs(Decimal(str(op.get("usd_amount") or 0)))
+        period["count"] += 1
+        if op.get("type") == "buy_usd":
+            period["buy_usd"] += abs_usd
+            period["buy_rate_total"] += Decimal(str(op.get("rate") or 0)) * abs_usd
+            period["buy_rate_weight"] += abs_usd
+        if op.get("type") == "sell_usd":
+            period["sell_usd"] += abs_usd
+            period["sell_rate_total"] += Decimal(str(op.get("rate") or 0)) * abs_usd
+            period["sell_rate_weight"] += abs_usd
+        period["management_fee"] += Decimal(str(op.get("management_fee_amount") or 0))
+        if op.get("type") == "payment" and op.get("status") == "completed":
+            amount = abs(Decimal(str(op.get("ves_amount") or op.get("final_amount") or op.get("requested_amount") or 0)))
+            metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
+            if metadata.get("payment_type") == "partner":
+                period["partner_payments"] += amount
+            if metadata.get("payment_type") == "provider":
+                period["provider_payments"] += amount
+    rows = []
+    for period in sorted(periods.values(), key=lambda item: item["date"], reverse=True):
+        period["buy_rate"] = period["buy_rate_total"] / period["buy_rate_weight"] if period["buy_rate_weight"] else Decimal("0")
+        period["sell_rate"] = period["sell_rate_total"] / period["sell_rate_weight"] if period["sell_rate_weight"] else Decimal("0")
+        rows.append(period)
+    return rows[:limit], len(rows)
+
+
+def dashboard_period_label(date_from, date_to, labels):
+    if date_from and date_to:
+        return f"{date_from} - {date_to}"
+    if date_from:
+        return f"{date_from} - {labels['all_dates']}"
+    if date_to:
+        return f"{labels['all_dates']} - {date_to}"
+    return labels["all_dates"]
 
 
 def report_account_amounts(op, account):
@@ -1829,6 +2076,248 @@ def generate_trade_report(operation_id):
     return output, None
 
 
+def generate_dashboard_report(filters):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Paragraph, Table, TableStyle
+
+    language = report_language()
+    labels = REPORT_LABELS[language]
+    granularity = filters.get("granularity") if filters.get("granularity") in ("day", "week", "month") else "day"
+    operations, date_from, date_to = dashboard_filtered_operations(filters)
+    stats = dashboard_stats(operations)
+    rows, total_rows = dashboard_rows_by_period(operations, granularity, 24)
+    period_text = dashboard_period_label(date_from, date_to, labels)
+    granularity_label = {"day": labels["daily"], "week": labels["weekly"], "month": labels["monthly"]}[granularity]
+    accounts = [row_to_dict(x) for x in query("select * from accounts where status != 'deleted' order by owner, currency, name")]
+
+    navy = colors.HexColor("#082C3A")
+    teal = colors.HexColor("#1FA4C4")
+    cyan = colors.HexColor("#58C6E4")
+    gold = colors.HexColor("#F5B700")
+    green = colors.HexColor("#198F5B")
+    red = colors.HexColor("#BE3548")
+    muted = colors.HexColor("#6B7F89")
+    border = colors.HexColor("#D8E5EA")
+    soft = colors.HexColor("#F5FAFC")
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=landscape(letter))
+    width, height = landscape(letter)
+    margin = 42
+    styles = getSampleStyleSheet()
+    body_style = ParagraphStyle("DashboardReportBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=8.3, leading=11.5, textColor=navy)
+
+    def draw_header(page_number, section_title=None):
+        c.setFillColor(colors.white)
+        c.rect(0, 0, width, height, fill=1, stroke=0)
+        watermark = BASE_DIR / "static/assets/magna-watermark.jpg"
+        if watermark.exists():
+            c.saveState()
+            c.setFillAlpha(0.045)
+            c.drawImage(str(watermark), width - 180, height - 220, width=136, height=225, mask="auto", preserveAspectRatio=True)
+            c.restoreState()
+        c.setFillColor(navy)
+        c.rect(0, height - 62, width, 62, fill=1, stroke=0)
+        c.setFillColor(teal)
+        c.rect(0, height - 62, 16, 62, fill=1, stroke=0)
+        c.setFillColor(cyan)
+        c.rect(16, height - 62, 6, 62, fill=1, stroke=0)
+        c.setFillColor(gold)
+        c.rect(22, height - 62, 3, 62, fill=1, stroke=0)
+        logo = BASE_DIR / "static/assets/magna-logo.jpg"
+        if logo.exists():
+            c.drawImage(str(logo), margin, height - 50, width=98, height=38, preserveAspectRatio=True, mask="auto")
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 17)
+        c.drawRightString(width - margin, height - 28, section_title or labels["dashboard_title"])
+        c.setFont("Helvetica", 7.5)
+        c.setFillColor(colors.HexColor("#CDEDF6"))
+        generated_at = datetime.now(timezone(timedelta(hours=-4))).strftime("%d %b %Y, %I:%M %p VET")
+        c.drawRightString(width - margin, height - 43, f"{labels['generated']} {generated_at} - {labels['period']}: {period_text}")
+        c.setFillColor(cyan)
+        c.rect(margin, height - 76, width - margin * 2, 3, fill=1, stroke=0)
+        c.setStrokeColor(border)
+        c.line(margin, 31, width - margin, 31)
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 7)
+        c.drawString(margin, 19, labels["dashboard_footer"])
+        c.drawRightString(width - margin, 19, f"Page {page_number}")
+
+    def draw_card(x, y, label, value, card_width, card_height=42, color=navy):
+        c.setFillColor(soft)
+        c.roundRect(x, y - card_height, card_width, card_height, 7, fill=1, stroke=0)
+        c.setStrokeColor(border)
+        c.roundRect(x, y - card_height, card_width, card_height, 7, fill=0, stroke=1)
+        c.setFillColor(muted)
+        c.setFont("Helvetica-Bold", 6.4)
+        c.drawString(x + 8, y - 13, label.upper())
+        c.setFillColor(color)
+        text = str(value or "-")
+        font_size = 10
+        if stringWidth(text, "Helvetica-Bold", font_size) > card_width - 16:
+            font_size = 8.2
+        c.setFont("Helvetica-Bold", font_size)
+        c.drawString(x + 8, y - 29, text)
+
+    def draw_card_row(y, cards, columns):
+        gap = 8
+        card_width = (width - margin * 2 - gap * (columns - 1)) / columns
+        for idx, card in enumerate(cards):
+            draw_card(margin + idx * (card_width + gap), y, card[0], card[1], card_width, card[3] if len(card) > 3 else 42, card[2] if len(card) > 2 else navy)
+
+    def draw_paragraph(text, x, y, paragraph_width):
+        paragraph = Paragraph(text, body_style)
+        _, paragraph_height = paragraph.wrap(paragraph_width, 400)
+        paragraph.drawOn(c, x, y - paragraph_height)
+        return y - paragraph_height
+
+    def format_rate(value):
+        decimal = Decimal(str(value or 0))
+        return report_number(decimal) if decimal else "-"
+
+    def summary_table(table_rows, y):
+        data = [
+            [labels["date"], labels["qty"], labels["buy_usd_total"], labels["sell_usd_total"], labels["management_fee"], labels["partner_payments"], labels["provider_payments"], labels["buy_rate"], labels["sell_rate"]]
+        ]
+        for row in table_rows:
+            data.append(
+                [
+                    report_date_label(row["date"], language, granularity),
+                    str(row["count"]),
+                    report_money(row["buy_usd"], "USD"),
+                    report_money(row["sell_usd"], "USD"),
+                    report_money(row["management_fee"], "USD"),
+                    report_money(row["partner_payments"], "VES"),
+                    report_money(row["provider_payments"], "VES"),
+                    format_rate(row["buy_rate"]),
+                    format_rate(row["sell_rate"]),
+                ]
+            )
+        if len(data) == 1:
+            data.append(["-", "0", "0.00 USD", "0.00 USD", "0.00 USD", "0.00 VES", "0.00 VES", "-", "-"])
+        table = Table(data, colWidths=[62, 35, 72, 72, 78, 92, 98, 62, 62], repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), navy),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 6.35),
+                    ("TEXTCOLOR", (0, 1), (-1, -1), navy),
+                    ("GRID", (0, 0), (-1, -1), 0.3, border),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("TEXTCOLOR", (2, 1), (2, -1), green),
+                    ("TEXTCOLOR", (3, 1), (3, -1), red),
+                ]
+            )
+        )
+        _, table_height = table.wrap(width - margin * 2, 300)
+        table.drawOn(c, margin, y - table_height)
+        return y - table_height
+
+    draw_header(1)
+    top = height - 106
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(margin, top, labels["dashboard_title"])
+    c.setFont("Helvetica", 8)
+    c.setFillColor(muted)
+    c.drawString(margin, top - 14, labels["dashboard_subtitle"])
+    c.setFillColor(green)
+    c.roundRect(width - margin - 214, top - 17, 214, 23, 11, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawCentredString(width - margin - 107, top - 9, f"{labels['period']}: {period_text} - {labels['granularity']}: {granularity_label}")
+    top -= 42
+
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 10.2)
+    c.drawString(margin, top, labels["current_balances"])
+    top -= 9
+    balance_cards = [
+        (f"{account.get('owner', '').upper()} - {account.get('currency', '-')}", f"{report_money(account.get('balance'), account.get('currency'))}", navy)
+        for account in accounts[:4]
+    ]
+    if balance_cards:
+        draw_card_row(top, balance_cards, 4)
+        top -= 54
+
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 10.2)
+    c.drawString(margin, top, labels["operating_summary"])
+    top -= 9
+    binance_ok_value = "-" if stats["binance_ok_percent"] is None else f"{report_number(stats['binance_ok_percent'])}%"
+    spread_value = "-" if stats["weighted_spread"] is None else f"{report_number(stats['weighted_spread'])}%"
+    draw_card_row(
+        top,
+        [
+            (labels["operations_count"], stats["count"], navy),
+            (labels["net_usd"], report_money(stats["usd"], "USD", True), red if stats["usd"] < 0 else green),
+            (labels["net_ves"], report_money(stats["ves"], "VES", True), red if stats["ves"] < 0 else green),
+            (labels["management_fee"], report_money(stats["management_fee"], "USD"), green),
+        ],
+        4,
+    )
+    top -= 52
+    draw_card_row(
+        top,
+        [
+            (labels["weighted_rate"], format_rate(stats["weighted"]), navy),
+            (labels["buy_rate"], format_rate(stats["buy_weighted"]), green),
+            (labels["sell_rate"], format_rate(stats["sell_weighted"]), red),
+            (labels["binance_ok"], f"{binance_ok_value} ({stats['binance_ok']}/{stats['binance_eligible']})", green if stats["binance_ok_percent"] is None or stats["binance_ok_percent"] >= 95 else red),
+            (labels["weighted_spread"], spread_value, navy if stats["weighted_spread"] is None else green if abs(stats["weighted_spread"]) <= Decimal(str(get_setting("binance_range_percent", "1") or 1)) else red),
+        ],
+        5,
+    )
+    top -= 58
+
+    c.setFont("Helvetica-Bold", 10.2)
+    c.setFillColor(navy)
+    c.drawString(margin, top, labels["narrative"])
+    top -= 8
+    narrative = labels["dashboard_narrative"].format(
+        period=period_text,
+        count=stats["count"],
+        net_usd=report_money(stats["usd"], "USD", True),
+        net_ves=report_money(stats["ves"], "VES", True),
+        buy_usd=report_money(stats["buy_usd"], "USD"),
+        sell_usd=report_money(stats["sell_usd"], "USD"),
+        management_fee=report_money(stats["management_fee"], "USD"),
+        binance_ok=stats["binance_ok"],
+        binance_total=stats["binance_eligible"],
+    )
+    if total_rows > len(rows):
+        narrative += f" {labels['table_limited'].format(shown=len(rows))}"
+    top = draw_paragraph(narrative, margin, top, width - margin * 2) - 14
+
+    c.setFont("Helvetica-Bold", 10.2)
+    c.setFillColor(navy)
+    c.drawString(margin, top, labels["summary_table"])
+    top -= 10
+    remaining_rows = rows
+    first_page_rows = remaining_rows[:9]
+    summary_table(first_page_rows, top)
+
+    if len(remaining_rows) > len(first_page_rows):
+        c.showPage()
+        draw_header(2, labels["summary_table"])
+        top = height - 104
+        summary_table(remaining_rows[len(first_page_rows):], top)
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer, None
+
+
 @app.get("/api/operations/<operation_id>/report")
 def download_operation_report(operation_id):
     user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
@@ -1842,6 +2331,22 @@ def download_operation_report(operation_id):
         mimetype="application/pdf",
         as_attachment=True,
         download_name=f"trade-report-{operation_id}.pdf",
+    )
+
+
+@app.get("/api/dashboard/report")
+def download_dashboard_report():
+    user, error = require_roles(ROLE_MASTER, *CLIENT_ROLES)
+    if error:
+        return error
+    report, report_error = generate_dashboard_report(request.args.to_dict())
+    if report_error:
+        return jsonify({"error": report_error}), 400
+    return send_file(
+        report,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name="dashboard-operations-report.pdf",
     )
 
 

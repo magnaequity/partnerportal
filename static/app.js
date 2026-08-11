@@ -88,6 +88,7 @@ const labels = {
     save: "Guardar",
     view: "Ver",
     report: "Reporte",
+    downloadDashboardReport: "Descargar reporte",
     close: "Cerrar",
     execute: "Ejecutar",
     closeOperation: "Completar operación",
@@ -310,6 +311,7 @@ const labels = {
     save: "Save",
     view: "View",
     report: "Report",
+    downloadDashboardReport: "Download report",
     close: "Close",
     execute: "Execute",
     closeOperation: "Complete transaction",
@@ -543,6 +545,20 @@ function currencyOptions(selected = "") {
 function reportUrl(opId) {
   const params = new URLSearchParams({ user_id: state.userId, role: state.role });
   return `/api/operations/${opId}/report?${params.toString()}`;
+}
+
+function dashboardReportUrl() {
+  const params = new URLSearchParams({ user_id: state.userId, role: state.role, granularity: state.dashboardGranularity });
+  Object.entries(state.dashboardFilters || {}).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  return `/api/dashboard/report?${params.toString()}`;
+}
+
+function syncDashboardReportLinks() {
+  qsa("[data-download-dashboard-report]").forEach((link) => {
+    link.href = dashboardReportUrl();
+  });
 }
 
 function binanceSnapshot(op) {
@@ -844,6 +860,9 @@ function dateFilterMarkup(filters, attributeName = "data-dashboard-filter", clas
         </div>
       </div>
       <button class="subtle clear-filters" data-clear-dashboard-filters type="button">${t("clearFilters")}</button>
+      <a class="icon-button report-download" data-download-dashboard-report href="${dashboardReportUrl()}" target="_blank" rel="noreferrer" title="${t("downloadDashboardReport")}" aria-label="${t("downloadDashboardReport")}">
+        <span aria-hidden="true">↓</span>
+      </a>
     </div>
   `;
 }
@@ -2270,6 +2289,10 @@ document.addEventListener("click", async (event) => {
     event.stopPropagation();
     return;
   }
+  if (event.target.closest("[data-download-dashboard-report]")) {
+    event.stopPropagation();
+    return;
+  }
   if (event.target.closest("[data-action='open-treasury']") && state.role !== "magna_admin") openTreasuryModal();
   if (event.target.closest("[data-action='new-account']")) openAccountModal(event.target.closest("[data-action]").dataset.owner);
   if (event.target.closest("[data-action='new-beneficiary']")) openBeneficiaryModal();
@@ -2392,6 +2415,7 @@ document.addEventListener("change", (event) => {
   if (dashboardGranularity) {
     state.dashboardGranularity = dashboardGranularity.value;
     localStorage.setItem("partnerportal_dashboard_granularity", state.dashboardGranularity);
+    syncDashboardReportLinks();
     renderDashboard();
     return;
   }
@@ -2433,6 +2457,7 @@ document.addEventListener("input", (event) => {
   const dashboardFilter = event.target.closest("[data-dashboard-filter]");
   if (dashboardFilter) {
     state.dashboardFilters[dashboardFilter.dataset.dashboardFilter] = dashboardFilter.value;
+    syncDashboardReportLinks();
     renderDashboard();
   }
   const filter = event.target.closest("[data-filter]");
