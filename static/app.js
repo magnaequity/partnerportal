@@ -89,6 +89,7 @@ const labels = {
     view: "Ver",
     report: "Reporte",
     downloadDashboardReport: "Descargar reporte",
+    total: "Total",
     close: "Cerrar",
     execute: "Ejecutar",
     closeOperation: "Completar operación",
@@ -312,6 +313,7 @@ const labels = {
     view: "View",
     report: "Report",
     downloadDashboardReport: "Download report",
+    total: "Total",
     close: "Close",
     execute: "Execute",
     closeOperation: "Complete transaction",
@@ -1201,7 +1203,48 @@ function compactDate(date) {
   return new Date(`${date}T00:00:00`).toLocaleDateString(state.lang === "es" ? "es-VE" : "en-US", { month: "short", day: "numeric" });
 }
 
-function dailySummaryTable(rows) {
+function dashboardSummaryTotals(ops, granularity) {
+  const rows = dashboardRowsByPeriod(ops, granularity, Number.MAX_SAFE_INTEGER);
+  return rows.reduce((total, row) => {
+    total.count += row.count;
+    total.buyUsd += row.buyUsd;
+    total.sellUsd += row.sellUsd;
+    total.managementFee += row.managementFee;
+    total.partnerPayments += row.partnerPayments;
+    total.providerPayments += row.providerPayments;
+    total.buyRateTotal += row.buyRateTotal;
+    total.buyRateWeight += row.buyRateWeight;
+    total.sellRateTotal += row.sellRateTotal;
+    total.sellRateWeight += row.sellRateWeight;
+    return total;
+  }, {
+    count: 0,
+    buyUsd: 0,
+    sellUsd: 0,
+    managementFee: 0,
+    partnerPayments: 0,
+    providerPayments: 0,
+    buyRateTotal: 0,
+    buyRateWeight: 0,
+    sellRateTotal: 0,
+    sellRateWeight: 0,
+  });
+}
+
+function dailySummaryTable(rows, totals) {
+  const totalRow = totals && totals.count ? `
+    <tr class="summary-total-row">
+      <td><strong>${t("total")}</strong></td>
+      <td>${totals.count}</td>
+      <td class="amount-positive">${money(totals.buyUsd, "USD")}</td>
+      <td class="amount-negative">${money(totals.sellUsd, "USD")}</td>
+      <td class="amount-positive">${money(totals.managementFee, "USD")}</td>
+      <td>${money(totals.partnerPayments, "VES")}</td>
+      <td>${money(totals.providerPayments, "VES")}</td>
+      <td>${totals.buyRateWeight ? money(weightedAverage(totals.buyRateTotal, totals.buyRateWeight)) : "—"}</td>
+      <td>${totals.sellRateWeight ? money(weightedAverage(totals.sellRateTotal, totals.sellRateWeight)) : "—"}</td>
+    </tr>
+  ` : "";
   return `
     <div class="table-wrap compact-table dashboard-summary-table">
       <table>
@@ -1232,6 +1275,7 @@ function dailySummaryTable(rows) {
               <td>${row.sellRate ? money(row.sellRate) : "—"}</td>
             </tr>
           `).join("") || `<tr><td colspan="9" class="muted">${t("noOperations")}</td></tr>`}
+          ${totalRow}
         </tbody>
       </table>
     </div>
@@ -1333,6 +1377,7 @@ function renderDashboard() {
   const ops = operationsInDateRange(state.data.operations, state.dashboardFilters);
   const rows = dailyDashboardRows(ops);
   const summaryRows = dashboardRowsByPeriod(ops, state.dashboardGranularity, 12);
+  const summaryTotals = dashboardSummaryTotals(ops, state.dashboardGranularity);
   qs("#viewBody").innerHTML = `
     ${dashboardSection("currentBalances", balanceCards())}
     ${dashboardSection("operationalSummary", `${metricCards(ops)}${pendingDashboardCards(state.data.operations)}`)}
@@ -1351,7 +1396,7 @@ function renderDashboard() {
         <h2>${t(summaryTitleKey())}</h2>
         ${dashboardGranularityControl()}
       </div>
-      ${dailySummaryTable(summaryRows)}
+      ${dailySummaryTable(summaryRows, summaryTotals)}
     </section>
     <section class="panel">
       <div class="panel-header"><h2>${t("recentActivity")}</h2></div>

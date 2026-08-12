@@ -1016,6 +1016,15 @@ input[readonly] {
   font-size: clamp(0.82rem, 1.06vw, 1.02rem);
 }
 
+.dashboard-summary-table .summary-total-row {
+  background: rgba(88, 198, 228, 0.12);
+  box-shadow: inset 0 1px 0 var(--line);
+}
+
+.dashboard-summary-table .summary-total-row td {
+  font-weight: 900;
+}
+
 .management-fee-row {
   color: var(--muted);
   background: rgba(88, 198, 228, 0.05);

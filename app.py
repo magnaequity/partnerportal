@@ -1432,6 +1432,7 @@ REPORT_LABELS = {
         "provider_payments": "Provider Payments",
         "date": "Date",
         "qty": "Qty",
+        "total": "Total",
         "dashboard_narrative": "During {period}, the portal recorded <b>{count}</b> operations, with net USD movement of <b>{net_usd}</b> and net VES movement of <b>{net_ves}</b>. Buy USD volume totaled <b>{buy_usd}</b>, Sell USD volume totaled <b>{sell_usd}</b>, and Management Fee totaled <b>{management_fee}</b>. Binance validation was OK for <b>{binance_ok}</b> of <b>{binance_total}</b> eligible FX operations.",
         "table_limited": "Table limited to the latest {shown} periods to keep the report within two pages.",
     },
@@ -1505,6 +1506,7 @@ REPORT_LABELS = {
         "provider_payments": "Pagos Proveedores",
         "date": "Fecha",
         "qty": "Qty",
+        "total": "Total",
         "dashboard_narrative": "Durante {period}, el portal registro <b>{count}</b> operaciones, con un movimiento neto en USD de <b>{net_usd}</b> y un movimiento neto en VES de <b>{net_ves}</b>. El volumen de Compra USD fue <b>{buy_usd}</b>, el volumen de Venta USD fue <b>{sell_usd}</b> y el Management Fee total fue <b>{management_fee}</b>. La validacion Binance estuvo OK en <b>{binance_ok}</b> de <b>{binance_total}</b> operaciones FX elegibles.",
         "table_limited": "La tabla se limito a los ultimos {shown} periodos para mantener el reporte en maximo dos paginas.",
     },
@@ -1720,6 +1722,35 @@ def dashboard_rows_by_period(ops, granularity="day", limit=24):
         period["sell_rate"] = period["sell_rate_total"] / period["sell_rate_weight"] if period["sell_rate_weight"] else Decimal("0")
         rows.append(period)
     return rows[:limit], len(rows)
+
+
+def dashboard_period_totals(rows):
+    total = {
+        "count": 0,
+        "buy_usd": Decimal("0"),
+        "sell_usd": Decimal("0"),
+        "management_fee": Decimal("0"),
+        "partner_payments": Decimal("0"),
+        "provider_payments": Decimal("0"),
+        "buy_rate_total": Decimal("0"),
+        "buy_rate_weight": Decimal("0"),
+        "sell_rate_total": Decimal("0"),
+        "sell_rate_weight": Decimal("0"),
+    }
+    for row in rows:
+        total["count"] += row["count"]
+        total["buy_usd"] += row["buy_usd"]
+        total["sell_usd"] += row["sell_usd"]
+        total["management_fee"] += row["management_fee"]
+        total["partner_payments"] += row["partner_payments"]
+        total["provider_payments"] += row["provider_payments"]
+        total["buy_rate_total"] += row["buy_rate_total"]
+        total["buy_rate_weight"] += row["buy_rate_weight"]
+        total["sell_rate_total"] += row["sell_rate_total"]
+        total["sell_rate_weight"] += row["sell_rate_weight"]
+    total["buy_rate"] = total["buy_rate_total"] / total["buy_rate_weight"] if total["buy_rate_weight"] else Decimal("0")
+    total["sell_rate"] = total["sell_rate_total"] / total["sell_rate_weight"] if total["sell_rate_weight"] else Decimal("0")
+    return total
 
 
 def dashboard_period_label(date_from, date_to, labels):
@@ -2090,6 +2121,8 @@ def generate_dashboard_report(filters):
     operations, date_from, date_to = dashboard_filtered_operations(filters)
     stats = dashboard_stats(operations)
     rows, total_rows = dashboard_rows_by_period(operations, granularity, 24)
+    all_rows, _ = dashboard_rows_by_period(operations, granularity, max(len(operations), 1))
+    totals = dashboard_period_totals(all_rows)
     period_text = dashboard_period_label(date_from, date_to, labels)
     granularity_label = {"day": labels["daily"], "week": labels["weekly"], "month": labels["monthly"]}[granularity]
     accounts = [row_to_dict(x) for x in query("select * from accounts where status != 'deleted' order by owner, currency, name")]
@@ -2178,7 +2211,7 @@ def generate_dashboard_report(filters):
         decimal = Decimal(str(value or 0))
         return report_number(decimal) if decimal else "-"
 
-    def summary_table(table_rows, y):
+    def summary_table(table_rows, y, total_row=None):
         data = [
             [labels["date"], labels["qty"], labels["buy_usd_total"], labels["sell_usd_total"], labels["management_fee"], labels["partner_payments"], labels["provider_payments"], labels["buy_rate"], labels["sell_rate"]]
         ]
@@ -2196,9 +2229,24 @@ def generate_dashboard_report(filters):
                     format_rate(row["sell_rate"]),
                 ]
             )
+        if total_row and total_row["count"]:
+            data.append(
+                [
+                    labels["total"],
+                    str(total_row["count"]),
+                    report_money(total_row["buy_usd"], "USD"),
+                    report_money(total_row["sell_usd"], "USD"),
+                    report_money(total_row["management_fee"], "USD"),
+                    report_money(total_row["partner_payments"], "VES"),
+                    report_money(total_row["provider_payments"], "VES"),
+                    format_rate(total_row["buy_rate"]),
+                    format_rate(total_row["sell_rate"]),
+                ]
+            )
         if len(data) == 1:
             data.append(["-", "0", "0.00 USD", "0.00 USD", "0.00 USD", "0.00 VES", "0.00 VES", "-", "-"])
         table = Table(data, colWidths=[62, 35, 72, 72, 78, 92, 98, 62, 62], repeatRows=1)
+        total_index = len(data) - 1 if total_row and total_row["count"] else None
         table.setStyle(
             TableStyle(
                 [
@@ -2216,6 +2264,14 @@ def generate_dashboard_report(filters):
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                     ("TEXTCOLOR", (2, 1), (2, -1), green),
                     ("TEXTCOLOR", (3, 1), (3, -1), red),
+                    *(
+                        [
+                            ("BACKGROUND", (0, total_index), (-1, total_index), colors.HexColor("#EAF7FB")),
+                            ("FONTNAME", (0, total_index), (-1, total_index), "Helvetica-Bold"),
+                        ]
+                        if total_index
+                        else []
+                    ),
                 ]
             )
         )
@@ -2305,13 +2361,13 @@ def generate_dashboard_report(filters):
     top -= 10
     remaining_rows = rows
     first_page_rows = remaining_rows[:9]
-    summary_table(first_page_rows, top)
+    summary_table(first_page_rows, top, totals if len(remaining_rows) <= len(first_page_rows) else None)
 
     if len(remaining_rows) > len(first_page_rows):
         c.showPage()
         draw_header(2, labels["summary_table"])
         top = height - 104
-        summary_table(remaining_rows[len(first_page_rows):], top)
+        summary_table(remaining_rows[len(first_page_rows):], top, totals)
     c.showPage()
     c.save()
     buffer.seek(0)
